@@ -40,7 +40,15 @@ type Peer struct {
 type SignalFunc func(context.Context, Signal) error
 
 func New(approved bool, send SignalFunc) (*Peer, error) {
-	return NewWithConfig(approved, webrtc.Configuration{}, send)
+	// Public STUN servers let ICE discover each peer's public address and
+	// hole-punch a DIRECT path across the internet without any relay (TURN).
+	// Symmetric NAT / strict firewalls may still require a TURN server.
+	cfg := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{URLs: []string{"stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"}},
+		},
+	}
+	return NewWithConfig(approved, cfg, send)
 }
 
 func NewWithConfig(approved bool, config webrtc.Configuration, send SignalFunc) (*Peer, error) {

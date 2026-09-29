@@ -13,7 +13,8 @@ try {
     $env:CGO_ENABLED = '0'
     $env:GOOS = 'windows'
     $env:GOARCH = 'amd64'
-    go build -trimpath -ldflags='-s -w' -o (Join-Path $Dist 'RemoteSupport.exe') './cmd/remotesupport'
+    # -H=windowsgui: GUI alt-sistemi olarak derle; açılışta konsol (DOS) penceresi çıkmasın.
+    go build -trimpath -ldflags='-s -w -H=windowsgui' -o (Join-Path $Dist 'RemoteSupport.exe') './cmd/remotesupport'
     if ($LASTEXITCODE -ne 0) { throw 'RemoteSupport.exe build failed.' }
 
     Write-Host 'Signaling embedded in RemoteSupport.exe.'
