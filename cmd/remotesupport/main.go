@@ -12,7 +12,11 @@ import (
 	"image/color"
 	"image/jpeg"
 	"io"
+	"log"
 	"math"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,27 +31,38 @@ import (
 	"github.com/eirahoutmoss/remotesupport/client/screen"
 	clientsignaling "github.com/eirahoutmoss/remotesupport/client/signaling"
 	webrtcpeer "github.com/eirahoutmoss/remotesupport/client/webrtc"
+	server "github.com/eirahoutmoss/remotesupport/server/signaling"
 	"github.com/eirahoutmoss/remotesupport/shared/protocol"
 	"github.com/pion/webrtc/v4"
+	"golang.org/x/sys/windows"
 )
 
 const (
 	appTitle            = "Remote Support"
-	defaultSignalingURL = "ws://127.0.0.1:8091/v1/ws"
+	defaultSignalingURL = ""
 	windowClass         = "RemoteSupportWindow"
 	viewerClass         = "RemoteSupportViewer"
-	windowWidth         = 760
-	windowHeight        = 560
+	windowWidth         = 1180
+	windowHeight        = 760
 
-	ID_GET_SUPPORT  = 1001
-	ID_GIVE_SUPPORT = 1002
-	ID_BACK         = 1003
-	ID_COPY_CODE    = 1004
-	ID_REMOTE_CODE  = 1005
-	ID_CONNECT      = 1006
-	ID_MONITOR_BASE = 2000
-	ID_FILE_SEND    = 3001
-	WM_APP_MONITORS = 0x8001
+	ID_GET_SUPPORT    = 1001
+	ID_GIVE_SUPPORT   = 1002
+	ID_BACK           = 1003
+	ID_COPY_CODE      = 1004
+	ID_REMOTE_CODE    = 1005
+	ID_CONNECT        = 1006
+	ID_SETTINGS       = 1007
+	ID_ABOUT          = 1008
+	ID_SETTINGS_SAVE  = 1009
+	ID_SETTINGS_RESET = 1010
+	ID_MONITOR_BASE   = 2000
+	ID_FILE_SEND      = 3001
+	ID_RES_ORIGINAL   = 4000
+	ID_RES_1080P      = 4001
+	ID_RES_720P       = 4002
+	ID_RES_480P       = 4003
+	ID_FULLSCREEN     = 5001
+	WM_APP_MONITORS   = 0x8001
 )
 
 var (
@@ -60,6 +75,9 @@ var (
 	defWindowProc    = user32.NewProc("DefWindowProcW")
 	showWindow       = user32.NewProc("ShowWindow")
 	setWindowPos     = user32.NewProc("SetWindowPos")
+	getWindowRect    = user32.NewProc("GetWindowRect")
+	getWindowLongPtr = user32.NewProc("GetWindowLongPtrW")
+	setWindowLongPtr = user32.NewProc("SetWindowLongPtrW")
 	updateWindow     = user32.NewProc("UpdateWindow")
 	getMessage       = user32.NewProc("GetMessageW")
 	translateMsg     = user32.NewProc("TranslateMessage")
@@ -91,7 +109,18 @@ var (
 	stretchDIBits    = gdi32DLL.NewProc("StretchDIBits")
 	setStretchMode   = gdi32DLL.NewProc("SetStretchBltMode")
 	getStockObject   = gdi32DLL.NewProc("GetStockObject")
+	createPen        = gdi32DLL.NewProc("CreatePen")
+	selectObject     = gdi32DLL.NewProc("SelectObject")
+	deleteObject     = gdi32DLL.NewProc("DeleteObject")
+	roundRect        = gdi32DLL.NewProc("RoundRect")
+	drawText         = user32.NewProc("DrawTextW")
+	mapVirtualKey    = user32.NewProc("MapVirtualKeyW")
+	createFont       = gdi32DLL.NewProc("CreateFontW")
+	createSolidBrush = gdi32DLL.NewProc("CreateSolidBrush")
+	setTextColor     = gdi32DLL.NewProc("SetTextColor")
+	setBkMode        = gdi32DLL.NewProc("SetBkMode")
 	patBlt           = gdi32DLL.NewProc("PatBlt")
+	ellipse          = gdi32DLL.NewProc("Ellipse")
 	setCapture       = user32.NewProc("SetCapture")
 	releaseCapture   = user32.NewProc("ReleaseCapture")
 	globalAlloc      = kernel32.NewProc("GlobalAlloc")
@@ -163,21 +192,29 @@ type msg struct {
 	Pt      point
 }
 type windowState struct {
-	hwnd           uintptr
-	mode           int
-	status         uintptr
-	codeLabel      uintptr
-	codeEdit       uintptr
-	remoteEdit     uintptr
-	monitorButtons []uintptr
-	action         uintptr
-	copy           uintptr
-	back           uintptr
-	homeGet        uintptr
-	homeGive       uintptr
-	fileSend       uintptr
-	header         uintptr
-	subtitle       uintptr
+	hwnd               uintptr
+	mode               int
+	status             uintptr
+	codeLabel          uintptr
+	codeEdit           uintptr
+	remoteEdit         uintptr
+	monitorButtons     []uintptr
+	action             uintptr
+	copy               uintptr
+	back               uintptr
+	homeGet            uintptr
+	homeGive           uintptr
+	fileSend           uintptr
+	resolutionButtons  []uintptr
+	fullscreenButton   uintptr
+	settingsEndpoint   uintptr
+	settingsQuality    uintptr
+	settingsResolution uintptr
+	settingsSave       uintptr
+	settingsReset      uintptr
+	header             uintptr
+	subtitle           uintptr
+	statusText         string
 
 	mu     sync.Mutex
 	sig    *clientsignaling.Client
@@ -189,6 +226,107 @@ var state windowState
 
 var viewer viewerState
 
+var (
+	uiBgBrush      uintptr
+	uiPanelBrush   uintptr
+	uiEditBrush    uintptr
+	uiHeaderFont   uintptr
+	uiBrandFont    uintptr
+	uiTitleFont    uintptr
+	uiSubtitleFont uintptr
+	uiBodyFont     uintptr
+	uiButtonFont   uintptr
+	uiLabelFont    uintptr
+	uiSmallFont    uintptr
+	uiCodeFont     uintptr
+	uiEditFont     uintptr
+	uiIconFont     uintptr
+)
+
+// Palette. Values are written as intuitive 0xRRGGBB and converted to the
+// Win32 COLORREF byte order (0x00BBGGRR) by rgb() at every use site. Writing
+// them as RGB and passing them straight to GDI (as the first version did) makes
+// GDI read them as BGR, which turned the blue accent orange and the navy canvas
+// brown; rgb() is what actually gives the concept its blue/navy look.
+const (
+	uiBgColor     = 0x0A1220 // app canvas, deep navy (top of gradient)
+	uiBgColor2    = 0x0C1626 // app canvas, bottom of gradient
+	uiBarColor    = 0x0B1524 // top product bar + footer
+	uiNavColor    = 0x080F1C // left navigation rail (darkest surface)
+	uiPanelColor  = 0x131F30 // cards / panels
+	uiPanelHi     = 0x182842 // hovered / active panel
+	uiEditColor   = 0x0D1726 // input fields, code box
+	uiBorderColor = 0x21324B // hairline dividers / borders
+	uiTextColor   = 0xEDF2F8 // primary text
+	uiMutedColor  = 0x93A4BA // secondary text
+	uiFaintColor  = 0x5D6E85 // tertiary / placeholder text
+	uiAccentColor = 0x2E90FF // primary accent (blue)
+	uiAccentHi    = 0x57A9FF // accent highlight (gradient top / glow)
+	uiAccentDim   = 0x1E5FB0 // accent shadow (gradient bottom)
+	uiCyanColor   = 0x38BDF8 // secondary accent used sparingly on icons
+	uiSuccess     = 0x26D07C // "connected" / live status
+	uiDanger      = 0xEF4655 // disconnect / destructive
+	uiDangerHi    = 0xF56672 // disconnect highlight
+)
+
+type appSettings struct {
+	SignalingURL string `json:"signaling_url"`
+	Quality      int    `json:"quality"`
+	MaxHeight    int    `json:"max_height"`
+	InputEnabled bool   `json:"input_enabled"`
+}
+
+var settingsMu sync.RWMutex
+var appCfg = appSettings{Quality: 88, MaxHeight: 0, InputEnabled: true}
+
+func settingsPath() string {
+	base, err := os.UserConfigDir()
+	if err != nil || base == "" {
+		return ""
+	}
+	dir := filepath.Join(base, "RemoteSupport")
+	_ = os.MkdirAll(dir, 0700)
+	return filepath.Join(dir, "settings.json")
+}
+
+func loadSettings() {
+	path := settingsPath()
+	if path == "" {
+		return
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var cfg appSettings
+	if json.Unmarshal(b, &cfg) != nil {
+		return
+	}
+	if cfg.Quality != 76 && cfg.Quality != 88 {
+		cfg.Quality = 88
+	}
+	if cfg.MaxHeight != 0 && cfg.MaxHeight != 1080 && cfg.MaxHeight != 720 && cfg.MaxHeight != 480 {
+		cfg.MaxHeight = 0
+	}
+	settingsMu.Lock()
+	appCfg = cfg
+	settingsMu.Unlock()
+}
+
+func saveSettings() {
+	path := settingsPath()
+	if path == "" {
+		return
+	}
+	settingsMu.RLock()
+	cfg := appCfg
+	settingsMu.RUnlock()
+	b, _ := json.MarshalIndent(cfg, "", "  ")
+	_ = os.WriteFile(path, b, 0600)
+}
+
+func currentSettings() appSettings { settingsMu.RLock(); defer settingsMu.RUnlock(); return appCfg }
+
 var targetMonitorCache struct {
 	sync.Once
 	monitor capture.Monitor
@@ -196,9 +334,21 @@ var targetMonitorCache struct {
 }
 
 var sameHostPeer atomic.Bool
+var embeddedSignalingReady atomic.Bool
+var sidebarPage atomic.Int32
 var activeMonitor atomic.Int32
 var remoteMonitorsMu sync.RWMutex
 var remoteMonitors []capture.Monitor
+
+var activeTargetMonitorMu sync.RWMutex
+var activeTargetMonitor capture.Monitor
+var activeTargetMonitorOK bool
+
+var captureMaxHeight atomic.Int32
+var fullscreen atomic.Bool
+var fullscreenSavedStyle uintptr
+var fullscreenSavedRect rect
+var fullscreenSavedValid bool
 
 type viewerState struct {
 	hwnd   uintptr
@@ -248,6 +398,7 @@ type winKeyInput struct {
 	Type uint32
 	Pad  uint32
 	Ki   winKeyboardInput
+	Pad2 [8]byte // INPUT union is 32 bytes on Windows x64
 }
 
 const (
@@ -265,7 +416,9 @@ const (
 	mouseAbsolute   = 0x8000
 	mouseVirtual    = 0x4000
 
-	keyUp = 0x0002
+	keyUp       = 0x0002
+	keyScancode = 0x0008
+	keyExtended = 0x0001
 )
 
 type bitmapInfoHeader struct {
@@ -298,6 +451,96 @@ type paintStruct struct {
 func utf16ptr(s string) *uint16 {
 	p, _ := syscall.UTF16PtrFromString(s)
 	return p
+}
+
+// rgb converts an intuitive 0xRRGGBB value to a Win32 COLORREF (0x00BBGGRR),
+// which is the byte order GDI's CreateSolidBrush / SetTextColor expect.
+func rgb(hex uint32) uintptr {
+	r := (hex >> 16) & 0xFF
+	g := (hex >> 8) & 0xFF
+	b := hex & 0xFF
+	return uintptr(b<<16 | g<<8 | r)
+}
+
+// mix blends two 0xRRGGBB colors by t in [0,1] and returns a COLORREF. Used for
+// cheap vertical gradients (bands) and glow falloff without alpha blending.
+func mix(a, b uint32, t float64) uintptr {
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	ar, ag, ab := (a>>16)&0xFF, (a>>8)&0xFF, a&0xFF
+	br, bg, bb := (b>>16)&0xFF, (b>>8)&0xFF, b&0xFF
+	r := uint32(float64(ar) + (float64(br)-float64(ar))*t)
+	g := uint32(float64(ag) + (float64(bg)-float64(ag))*t)
+	bl := uint32(float64(ab) + (float64(bb)-float64(ab))*t)
+	return uintptr(bl<<16 | g<<8 | r)
+}
+
+// fillBand paints a solid rectangle in a COLORREF (already byte-ordered).
+func fillBand(hdc uintptr, x, y, w, h int, color uintptr) {
+	if w <= 0 || h <= 0 {
+		return
+	}
+	rc := rect{Left: int32(x), Top: int32(y), Right: int32(x + w), Bottom: int32(y + h)}
+	brush, _, _ := createSolidBrush.Call(color)
+	if brush != 0 {
+		fillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), brush)
+		deleteObject.Call(brush)
+	}
+}
+
+// vGradient paints a vertical gradient from 0xRRGGBB top to bottom using n bands.
+func vGradient(hdc uintptr, x, y, w, h int, top, bottom uint32, n int) {
+	if h <= 0 || w <= 0 {
+		return
+	}
+	if n < 1 {
+		n = 1
+	}
+	step := float64(h) / float64(n)
+	for i := 0; i < n; i++ {
+		by := y + int(float64(i)*step)
+		bh := y + int(float64(i+1)*step) - by
+		if bh < 1 {
+			bh = 1
+		}
+		fillBand(hdc, x, by, w, bh, mix(top, bottom, float64(i)/float64(n-1+1)))
+	}
+}
+
+func makeUIFont(height int, weight int) uintptr {
+	face := utf16ptr("Segoe UI")
+	r, _, _ := createFont.Call(
+		uintptr(int32(-height)), 0, 0, 0, uintptr(weight), 0, 0, 0,
+		uintptr(1), 0, 0, 5, 0, uintptr(unsafe.Pointer(face)),
+	)
+	return r
+}
+
+func initUITheme() {
+	uiBgBrush, _, _ = createSolidBrush.Call(rgb(uiBgColor))
+	uiPanelBrush, _, _ = createSolidBrush.Call(rgb(uiPanelColor))
+	uiEditBrush, _, _ = createSolidBrush.Call(rgb(uiEditColor))
+	uiHeaderFont = makeUIFont(27, 700)   // page titles ("Uzaktan Destek")
+	uiBrandFont = makeUIFont(20, 800)    // product wordmark
+	uiTitleFont = makeUIFont(18, 700)    // card titles
+	uiSubtitleFont = makeUIFont(15, 600) // section / row titles
+	uiBodyFont = makeUIFont(13, 400)     // body text
+	uiButtonFont = makeUIFont(13, 600)   // button labels
+	uiLabelFont = makeUIFont(11, 700)    // ALL-CAPS section labels
+	uiSmallFont = makeUIFont(11, 400)    // stats / captions
+	uiCodeFont = makeUIFont(36, 800)     // big connection code
+	uiEditFont = makeUIFont(22, 600)     // input fields
+	uiIconFont = makeUIFont(20, 400)     // glyph icons
+}
+
+func setControlFont(hwnd, font uintptr) {
+	if hwnd != 0 && font != 0 {
+		sendMessage.Call(hwnd, 0x0030, font, 1) // WM_SETFONT
+	}
 }
 
 func registerViewerClass() {
@@ -344,20 +587,92 @@ func resizeViewer() {
 		return
 	}
 
-	// When the remote viewer is active it owns almost the entire client area.
-	// Before connection, keep the original compact layout.
-	y := 120
 	viewer.mu.RLock()
 	active := viewer.active
 	viewer.mu.RUnlock()
-	if active {
-		y = 58
+	if active && !fullscreen.Load() {
+		setWindowPos.Call(h, 0, 168, 145, uintptr(maxInt(1, w-190)), uintptr(maxInt(1, ht-210)), 0x0004|0x0010)
+	} else if active {
+		setWindowPos.Call(h, 0, 0, 86, uintptr(maxInt(1, w)), uintptr(maxInt(1, ht-86)), 0x0004|0x0010)
 	}
-	bottom := ht - 20
-	if bottom <= y {
-		bottom = y + 1
+}
+
+func toggleFullscreen() {
+	if state.hwnd == 0 {
+		return
 	}
-	setWindowPos.Call(h, 0, 20, uintptr(y), uintptr(maxInt(1, w-40)), uintptr(bottom-y), 0x0004|0x0010) // SWP_NOZORDER | SWP_NOACTIVATE
+	if fullscreen.Load() {
+		if fullscreenSavedValid {
+			setWindowLongPtr.Call(state.hwnd, ^uintptr(15), fullscreenSavedStyle)
+			w := int(fullscreenSavedRect.Right - fullscreenSavedRect.Left)
+			h := int(fullscreenSavedRect.Bottom - fullscreenSavedRect.Top)
+			setWindowPos.Call(state.hwnd, 0, uintptr(fullscreenSavedRect.Left), uintptr(fullscreenSavedRect.Top), uintptr(maxInt(1, w)), uintptr(maxInt(1, h)), 0x0004|0x0020|0x0040)
+		}
+		fullscreen.Store(false)
+		show(state.fullscreenButton)
+		showResolutionControls(true)
+		showMonitorControls(true)
+	} else {
+		var rc rect
+		getWindowRect.Call(state.hwnd, uintptr(unsafe.Pointer(&rc)))
+		style, _, _ := getWindowLongPtr.Call(state.hwnd, ^uintptr(15))
+		fullscreenSavedStyle = style
+		fullscreenSavedRect = rc
+		fullscreenSavedValid = true
+		setWindowLongPtr.Call(state.hwnd, ^uintptr(15), 0x80000000|0x10000000)
+		cx := systemMetric(0)
+		cy := systemMetric(1)
+		setWindowPos.Call(state.hwnd, 0, 0, 0, uintptr(maxInt(1, int(cx))), uintptr(maxInt(1, int(cy))), 0x0004|0x0020|0x0040)
+		fullscreen.Store(true)
+		hide(state.fullscreenButton)
+		showResolutionControls(false)
+		showMonitorControls(false)
+	}
+	layoutUI()
+	resizeViewer()
+	invalidateRect.Call(viewer.hwnd, 0, 0)
+}
+
+func showResolutionControls(visible bool) {
+	state.mu.Lock()
+	buttons := append([]uintptr(nil), state.resolutionButtons...)
+	state.mu.Unlock()
+	for _, h := range buttons {
+		if visible {
+			show(h)
+		} else {
+			hide(h)
+		}
+	}
+}
+
+func showMonitorControls(visible bool) {
+	state.mu.Lock()
+	buttons := append([]uintptr(nil), state.monitorButtons...)
+	state.mu.Unlock()
+	for _, h := range buttons {
+		if visible {
+			show(h)
+		} else {
+			hide(h)
+		}
+	}
+}
+
+func setRemoteResolution(maxHeight int) {
+	if maxHeight < 0 {
+		maxHeight = 0
+	}
+	state.mu.Lock()
+	peer := state.peer
+	state.mu.Unlock()
+	if peer != nil {
+		_ = peer.SendControlText(fmt.Sprintf("RESOLUTION:%d", maxHeight))
+	}
+	labels := map[int]string{0: "Otomatik", 1080: "1080p", 720: "720p", 480: "480p"}
+	if label, ok := labels[maxHeight]; ok {
+		setStatus("● Görüntü çözünürlüğü: " + label)
+	}
 }
 
 func maxInt(a, b int) int {
@@ -447,10 +762,20 @@ func showViewer() {
 	if h != 0 {
 		show(h)
 	}
+	showMonitorControls(!fullscreen.Load())
+	showResolutionControls(!fullscreen.Load())
+	show(state.fullscreenButton)
+	resizeViewer()
 }
 
 func hideViewer() {
+	if fullscreen.Load() {
+		toggleFullscreen()
+	}
 	hide(state.fileSend)
+	hide(state.fullscreenButton)
+	showResolutionControls(false)
+	showMonitorControls(false)
 	state.mu.Lock()
 	buttons := append([]uintptr(nil), state.monitorButtons...)
 	state.mu.Unlock()
@@ -546,6 +871,77 @@ func viewerWndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 		viewer.mu.Unlock()
 		invalidateRect.Call(hwnd, 0, 0)
 		return 0
+	case 0x0007: // WM_SETFOCUS
+		return 0
+	case 0x0087: // WM_GETDLGCODE
+		return 0x0004 | 0x0080 | 0x0001 | 0x0002 | 0x0004
+	case 0x0201: // WM_LBUTTONDOWN
+		setFocus.Call(hwnd)
+		setCapture.Call(hwnd)
+		mx := int(int16(uint16(lParam & 0xffff)))
+		my := int(int16(uint16(lParam >> 16)))
+		sendRemoteMouse("down", mx, my, 0, 0)
+		return 0
+	case 0x0202: // WM_LBUTTONUP
+		releaseCapture.Call()
+		mx := int(int16(uint16(lParam & 0xffff)))
+		my := int(int16(uint16(lParam >> 16)))
+		sendRemoteMouse("up", mx, my, 0, 0)
+		return 0
+	case 0x0204: // WM_RBUTTONDOWN
+		setFocus.Call(hwnd)
+		setCapture.Call(hwnd)
+		mx := int(int16(uint16(lParam & 0xffff)))
+		my := int(int16(uint16(lParam >> 16)))
+		sendRemoteMouse("down", mx, my, 2, 0)
+		return 0
+	case 0x0205: // WM_RBUTTONUP
+		releaseCapture.Call()
+		mx := int(int16(uint16(lParam & 0xffff)))
+		my := int(int16(uint16(lParam >> 16)))
+		sendRemoteMouse("up", mx, my, 2, 0)
+		return 0
+	case 0x0207: // WM_MBUTTONDOWN
+		setFocus.Call(hwnd)
+		setCapture.Call(hwnd)
+		mx := int(int16(uint16(lParam & 0xffff)))
+		my := int(int16(uint16(lParam >> 16)))
+		sendRemoteMouse("down", mx, my, 1, 0)
+		return 0
+	case 0x0208: // WM_MBUTTONUP
+		releaseCapture.Call()
+		mx := int(int16(uint16(lParam & 0xffff)))
+		my := int(int16(uint16(lParam >> 16)))
+		sendRemoteMouse("up", mx, my, 1, 0)
+		return 0
+	case 0x0100: // WM_KEYDOWN
+		if wParam == 0x7A { // VK_F11
+			toggleFullscreen()
+			return 0
+		}
+		if wParam == 0x1B && fullscreen.Load() { // VK_ESCAPE
+			toggleFullscreen()
+			return 0
+		}
+		if wParam != 0 {
+			sendRemoteKey("keydown", uint16(wParam))
+		}
+		return 0
+	case 0x0101: // WM_KEYUP
+		if wParam != 0 {
+			sendRemoteKey("keyup", uint16(wParam))
+		}
+		return 0
+	case 0x0104: // WM_SYSKEYDOWN (Alt, F-keys, etc.)
+		if wParam != 0 {
+			sendRemoteKey("keydown", uint16(wParam))
+		}
+		return 0
+	case 0x0105: // WM_SYSKEYUP
+		if wParam != 0 {
+			sendRemoteKey("keyup", uint16(wParam))
+		}
+		return 0
 	case 0x020A: // WM_MOUSEWHEEL
 		delta := int16(uint16(wParam >> 16))
 		if delta == 0 {
@@ -604,24 +1000,21 @@ func sendRemoteInput(peer *webrtcpeer.Peer, ev protocol.InputEvent) {
 }
 
 func remoteTargetMonitor() (capture.Monitor, bool) {
+	activeTargetMonitorMu.RLock()
+	mon, ok := activeTargetMonitor, activeTargetMonitorOK
+	activeTargetMonitorMu.RUnlock()
+	if ok {
+		return mon, true
+	}
 	idx := int(activeMonitor.Load())
-	remoteMonitorsMu.RLock()
-	defer remoteMonitorsMu.RUnlock()
-	if idx >= 0 && idx < len(remoteMonitors) {
-		return remoteMonitors[idx], true
+	monitors, err := capture.ListMonitors()
+	if err == nil && idx >= 0 && idx < len(monitors) {
+		return monitors[idx], true
 	}
-	// Keep monitor 0 as a safe fallback until the target publishes its monitor list.
-	if len(remoteMonitors) > 0 {
-		return remoteMonitors[0], true
+	if len(monitors) > 0 {
+		return monitors[0], true
 	}
-	targetMonitorCache.Do(func() {
-		monitors, err := capture.ListMonitors()
-		if err == nil && len(monitors) > 0 {
-			targetMonitorCache.monitor = monitors[0]
-			targetMonitorCache.ok = true
-		}
-	})
-	return targetMonitorCache.monitor, targetMonitorCache.ok
+	return capture.Monitor{}, false
 }
 
 func normalizedViewerPoint(mx, my int) (float64, float64, bool) {
@@ -662,6 +1055,16 @@ func normalizedViewerPoint(mx, my int) (float64, float64, bool) {
 		y = 1
 	}
 	return x, y, true
+}
+
+func sendRemoteKey(keyType string, key uint16) {
+	state.mu.Lock()
+	peer := state.peer
+	state.mu.Unlock()
+	if peer == nil || key == 0 {
+		return
+	}
+	sendRemoteInput(peer, protocol.InputEvent{T: keyType, K: int(key)})
 }
 
 func sendRemoteMouse(moveType string, mx, my int, button int, delta int) {
@@ -825,6 +1228,19 @@ func handleRemoteInput(peer *webrtcpeer.Peer, raw string) {
 		}
 		return
 	}
+	if strings.HasPrefix(raw, "RESOLUTION:") {
+		if state.mode != 1 {
+			return
+		}
+		var h int
+		if _, err := fmt.Sscanf(strings.TrimPrefix(raw, "RESOLUTION:"), "%d", &h); err == nil {
+			if h == 0 || h == 480 || h == 720 || h == 1080 {
+				captureMaxHeight.Store(int32(h))
+				setStatus(fmt.Sprintf("● Ekran aktarım çözünürlüğü: %s", map[int]string{0: "Otomatik", 480: "480p", 720: "720p", 1080: "1080p"}[h]))
+			}
+		}
+		return
+	}
 	if strings.HasPrefix(raw, "MONITOR:") {
 		if state.mode != 1 {
 			return
@@ -832,7 +1248,12 @@ func handleRemoteInput(peer *webrtcpeer.Peer, raw string) {
 		var idx int
 		if _, err := fmt.Sscanf(strings.TrimPrefix(raw, "MONITOR:"), "%d", &idx); err == nil && idx >= 0 {
 			if monitors, err := capture.ListMonitors(); err == nil && idx < len(monitors) {
+				mon := monitors[idx]
 				activeMonitor.Store(int32(idx))
+				activeTargetMonitorMu.Lock()
+				activeTargetMonitor = mon
+				activeTargetMonitorOK = true
+				activeTargetMonitorMu.Unlock()
 				setStatus(fmt.Sprintf("● Monitör %d/%d aktarılıyor", idx+1, len(monitors)))
 			}
 		}
@@ -905,15 +1326,6 @@ func absoluteMouseInput(ev protocol.InputEvent, extraFlags uint32, mouseData uin
 }
 
 func injectRemoteMouse(ev protocol.InputEvent) {
-	if sameHostPeer.Load() {
-		return
-	}
-	// Mouse input must remain enabled. The previous same-host guard made the
-	// viewer a read-only camera during local testing because every mouse event
-	// was discarded before SendInput. A real two-machine session uses the same
-	// path. Same-host testing may move the single Windows cursor because Windows
-	// has only one physical pointer, but the remote input itself must not be
-	// silently dropped.
 	flags := uint32(mouseMove)
 	data := uint32(0)
 	switch ev.T {
@@ -945,15 +1357,40 @@ func injectRemoteMouse(ev protocol.InputEvent) {
 	if !ok {
 		return
 	}
+	// Do not immediately restore the physical cursor. SendInput is queued,
+	// and SetCursorPos here can race the injected event on monitor 2/3.
 	_, _, _ = sendInput.Call(1, uintptr(unsafe.Pointer(&in)), uintptr(unsafe.Sizeof(in)))
 }
 
 func injectRemoteKey(ev protocol.InputEvent) {
-	in := winKeyInput{Type: inputKeyboard, Ki: winKeyboardInput{Vk: uint16(ev.K)}}
-	if ev.T == "keyup" {
-		in.Ki.Flags = keyUp
+	vk := uint16(ev.K)
+	if vk == 0 {
+		return
 	}
+	// Use physical scan codes for navigation/modifier keys. This is important
+	// for combinations such as Ctrl+Left/Ctrl+Right, where Windows text
+	// controls rely on the extended-key semantics of the arrow keys.
+	scanResult, _, _ := mapVirtualKey.Call(uintptr(vk), 0)
+	scan := uint16(scanResult)
+	flags := uint32(keyScancode)
+	if ev.T == "keyup" {
+		flags |= keyUp
+	}
+	if isExtendedVirtualKey(vk) {
+		flags |= keyExtended
+	}
+	in := winKeyInput{Type: inputKeyboard, Ki: winKeyboardInput{
+		Vk: vk, Scan: scan, Flags: flags,
+	}}
 	_, _, _ = sendInput.Call(1, uintptr(unsafe.Pointer(&in)), uintptr(unsafe.Sizeof(in)))
+}
+
+func isExtendedVirtualKey(vk uint16) bool {
+	switch vk {
+	case 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E, 0x6F:
+		return true
+	}
+	return false
 }
 
 func chooseFile() (string, bool) {
@@ -1080,13 +1517,23 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 				return
 			case <-ticker.C:
 				monitor := int(activeMonitor.Load())
-				frame, err := capture.CaptureMonitor(monitor, 60)
+				maxHeight := int(captureMaxHeight.Load())
+				cfg := currentSettings()
+				quality := cfg.Quality
+				if quality == 0 {
+					quality = 88
+				}
+				frame, err := capture.CaptureMonitorScaled(monitor, quality, maxHeight)
 				if err != nil {
 					setStatus("● Ekran yakalanamadı: " + err.Error())
 					return
 				}
 				if len(frame.JPEG) > screen.MaxPayloadSize {
-					frame, err = capture.CaptureMonitor(monitor, 45)
+					fallbackQuality := 76
+					if quality < 80 {
+						fallbackQuality = quality
+					}
+					frame, err = capture.CaptureMonitorScaled(monitor, fallbackQuality, maxHeight)
 					if err != nil {
 						setStatus("● Ekran sıkıştırılamadı: " + err.Error())
 						return
@@ -1109,11 +1556,177 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 	}()
 }
 
+func startEmbeddedSignaling() {
+	addr := "0.0.0.0:8091"
+	s := server.NewServer()
+	go func() {
+		log.Printf("RemoteSupport embedded signaling listening on %s", addr)
+		if err := http.ListenAndServe(addr, s.Handler()); err != nil {
+			log.Printf("Embedded signaling unavailable on %s: %v", addr, err)
+		}
+	}()
+
+	// Give ListenAndServe a brief chance to bind. If another signaling
+	// process already owns the port, LAN discovery will find that process.
+	go func() {
+		for i := 0; i < 20; i++ {
+			conn, err := net.DialTimeout("tcp", "127.0.0.1:8091", 50*time.Millisecond)
+			if err == nil {
+				_ = conn.Close()
+				embeddedSignalingReady.Store(true)
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	go serveEmbeddedDiscovery()
+}
+
+func serveEmbeddedDiscovery() {
+	pc, err := net.ListenPacket("udp4", ":8090")
+	if err != nil {
+		log.Printf("Embedded LAN discovery unavailable: %v", err)
+		return
+	}
+	defer pc.Close()
+	buf := make([]byte, 256)
+	for {
+		_ = pc.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, peer, err := pc.ReadFrom(buf)
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			continue
+		}
+		if strings.TrimSpace(string(buf[:n])) != "REMOTESUPPORT_DISCOVER_V1" {
+			continue
+		}
+		ip := localIPv4ForPeer(peer)
+		if ip == "" {
+			continue
+		}
+		_, _ = pc.WriteTo([]byte("REMOTESUPPORT_SIGNALING_V1 ws://"+ip+":8091/v1/ws"), peer)
+	}
+}
+
+func localIPv4ForPeer(peer net.Addr) string {
+	udpPeer, ok := peer.(*net.UDPAddr)
+	if !ok {
+		return ""
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip := ipnet.IP.To4()
+			if ip == nil {
+				continue
+			}
+			if ip.Equal(udpPeer.IP) || ipnet.Contains(udpPeer.IP) {
+				return ip.String()
+			}
+		}
+	}
+	return ""
+}
+
 func signalingEndpoint() string {
 	if v := strings.TrimSpace(os.Getenv("REMOTESUPPORT_SIGNALING_URL")); v != "" {
 		return v
 	}
+	cfg := currentSettings()
+	if v := strings.TrimSpace(cfg.SignalingURL); v != "" {
+		return v
+	}
+	if embeddedSignalingReady.Load() {
+		return "ws://127.0.0.1:8091/v1/ws"
+	}
+	if v := discoverSignalingEndpoint(1200 * time.Millisecond); v != "" {
+		return v
+	}
 	return defaultSignalingURL
+}
+
+func discoverSignalingEndpoint(timeout time.Duration) string {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	if raw, err := conn.SyscallConn(); err == nil {
+		_ = raw.Control(func(fd uintptr) {
+			_ = windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, windows.SO_BROADCAST, 1)
+		})
+	}
+	deadline := time.Now().Add(timeout)
+	_ = conn.SetReadDeadline(deadline)
+	msg := []byte("REMOTESUPPORT_DISCOVER_V1")
+	for _, bcast := range discoveryBroadcasts() {
+		_, _ = conn.WriteToUDP(msg, &net.UDPAddr{IP: bcast, Port: 8090})
+	}
+	buf := make([]byte, 256)
+	for time.Now().Before(deadline) {
+		n, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			return ""
+		}
+		line := strings.TrimSpace(string(buf[:n]))
+		if strings.HasPrefix(line, "REMOTESUPPORT_SIGNALING_V1 ") {
+			u := strings.TrimSpace(strings.TrimPrefix(line, "REMOTESUPPORT_SIGNALING_V1 "))
+			if parsed, err := url.Parse(u); err == nil && parsed.Scheme == "ws" && parsed.Host != "" {
+				return u
+			}
+		}
+	}
+	return ""
+}
+
+func discoveryBroadcasts() []net.IP {
+	result := []net.IP{net.IPv4bcast}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return result
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip := ipnet.IP.To4()
+			mask := ipnet.Mask
+			if ip == nil || len(mask) != 4 {
+				continue
+			}
+			b := make(net.IP, 4)
+			for i := 0; i < 4; i++ {
+				b[i] = ip[i] | ^mask[i]
+			}
+			result = append(result, b)
+		}
+	}
+	return result
 }
 
 func newCode() string {
@@ -1139,10 +1752,14 @@ func getText(hwnd uintptr) string {
 
 func setStatus(text string) {
 	state.mu.Lock()
+	state.statusText = text
 	h := state.status
 	state.mu.Unlock()
 	if h != 0 {
 		setText(h, text)
+	}
+	if state.hwnd != 0 {
+		invalidateRect.Call(state.hwnd, 0, 0)
 	}
 }
 
@@ -1164,7 +1781,453 @@ func setModeVisible(mode int) {
 	_ = homeB
 }
 
+func moveControl(hwnd uintptr, x, y, w, h int, visible bool) {
+	if hwnd == 0 {
+		return
+	}
+	setWindowPos.Call(hwnd, 0, uintptr(x), uintptr(y), uintptr(maxInt(1, w)), uintptr(maxInt(1, h)), 0x0004|0x0010)
+	if visible {
+		show(hwnd)
+	} else {
+		hide(hwnd)
+	}
+}
+
+func layoutUI() {
+	if state.hwnd == 0 {
+		return
+	}
+	var rc rect
+	getClientRect.Call(state.hwnd, uintptr(unsafe.Pointer(&rc)))
+	w := int(rc.Right - rc.Left)
+	h := int(rc.Bottom - rc.Top)
+	if w < 700 || h < 500 {
+		return
+	}
+
+	state.mu.Lock()
+	mode := state.mode
+	state.mu.Unlock()
+	viewer.mu.RLock()
+	connected := viewer.active
+	viewer.mu.RUnlock()
+
+	// Header and footer are painted by the main window. Keep legacy text controls hidden.
+	hide(state.header)
+	hide(state.subtitle)
+	hide(state.status)
+
+	if connected && !fullscreen.Load() {
+		// Toolbar action buttons sit on the painted toolbar surface (y≈104).
+		moveControl(state.fileSend, w-306, 104, 128, 40, true)
+		moveControl(state.fullscreenButton, w-170, 104, 146, 40, true)
+		// Prominent red disconnect in the header (ID_BACK stops the session).
+		setText(state.back, "Bağlantıyı Kes")
+		moveControl(state.back, w-190, 22, 166, 42, true)
+		moveControl(state.action, 0, 0, 1, 1, false)
+		moveControl(state.copy, 0, 0, 1, 1, false)
+		moveControl(state.codeLabel, 0, 0, 1, 1, false)
+		moveControl(state.remoteEdit, 0, 0, 1, 1, false)
+		return
+	}
+	if connected && fullscreen.Load() {
+		hide(state.fileSend)
+		hide(state.fullscreenButton)
+		return
+	}
+
+	if mode == 10 {
+		moveControl(state.settingsEndpoint, 520, 235, 520, 44, true)
+		moveControl(state.settingsQuality, 520, 335, 180, 40, true)
+		moveControl(state.settingsResolution, 760, 335, 180, 40, true)
+		moveControl(state.settingsSave, 520, 500, 180, 44, true)
+		moveControl(state.settingsReset, 720, 500, 220, 44, true)
+		return
+	}
+	if mode == 11 {
+		return
+	}
+
+	if mode == 0 {
+		// Two primary action cards, side by side, tracking the window width.
+		contentW := w - contentX - gutter
+		cardGap := 24
+		cardW := (contentW - cardGap) / 2
+		cardY := 176
+		cardH := 200
+		moveControl(state.homeGet, contentX, cardY, cardW, cardH, true)
+		moveControl(state.homeGive, contentX+cardW+cardGap, cardY, cardW, cardH, true)
+		moveControl(state.back, 184, 500, 150, 48, false)
+		moveControl(state.action, 350, 500, 250, 48, false)
+		moveControl(state.copy, 620, 500, 170, 48, false)
+		moveControl(state.codeLabel, 184, 350, 816, 110, false)
+		moveControl(state.remoteEdit, 184, 350, 816, 58, false)
+		return
+	}
+
+	if mode == 1 {
+		setText(state.back, "‹ Geri")
+		moveControl(state.codeLabel, 214, 344, 560, 86, true) // big code inside painted box
+		moveControl(state.copy, 784, 356, 158, 62, true)      // copy pill inside code card
+		moveControl(state.remoteEdit, 178, 335, 782, 58, false)
+		moveControl(state.back, contentX, 566, 140, 46, true)
+		moveControl(state.action, contentX+156, 566, 260, 46, true)
+		return
+	}
+
+	if mode == 2 {
+		setText(state.back, "‹ Geri")
+		moveControl(state.remoteEdit, contentX, 356, 620, 62, true)
+		moveControl(state.action, contentX+636, 356, 146, 62, true) // Bağlan next to input
+		moveControl(state.copy, 0, 0, 1, 1, false)
+		moveControl(state.codeLabel, 0, 0, 1, 1, false)
+		moveControl(state.back, contentX, 470, 140, 46, true)
+	}
+}
+
+// Text alignment flags for paintText (DrawTextW).
+const (
+	dtCenter     = 0x00000001
+	dtRight      = 0x00000002
+	dtVCenter    = 0x00000004
+	dtSingleLine = 0x00000020
+	dtWordBreak  = 0x00000010
+	dtEndEllip   = 0x00008000
+
+	txLeft   = 0x00000000
+	txMid    = dtCenter | dtVCenter | dtSingleLine // centered both axes (icons, pills)
+	txVLeft  = dtVCenter | dtSingleLine            // left, vertically centered
+	txVRight = dtRight | dtVCenter | dtSingleLine  // right, vertically centered
+	txEnd    = dtVCenter | dtSingleLine | dtEndEllip
+	txWrap   = dtWordBreak
+)
+
+func paintText(hdc uintptr, text string, x, y, w, h int, font uintptr, color uint32, flags uint32) {
+	if hdc == 0 || text == "" {
+		return
+	}
+	setBkMode.Call(hdc, 1)
+	setTextColor.Call(hdc, rgb(color))
+	old, _, _ := selectObject.Call(hdc, font)
+	r := rect{Left: int32(x), Top: int32(y), Right: int32(x + w), Bottom: int32(y + h)}
+	drawText.Call(hdc, uintptr(unsafe.Pointer(utf16ptr(text))), ^uintptr(0), uintptr(unsafe.Pointer(&r)), uintptr(flags))
+	selectObject.Call(hdc, old)
+}
+
+func paintRoundPanel(hdc uintptr, x, y, w, h int, color uint32, radius int) {
+	brush, _, _ := createSolidBrush.Call(rgb(color))
+	if brush == 0 {
+		return
+	}
+	// Match pen to the fill so RoundRect's 1px outline doesn't leave a stray edge.
+	pen, _, _ := createPen.Call(0, 1, rgb(color))
+	oldBrush, _, _ := selectObject.Call(hdc, brush)
+	oldPen, _, _ := selectObject.Call(hdc, pen)
+	roundRect.Call(hdc, uintptr(x), uintptr(y), uintptr(x+w), uintptr(y+h), uintptr(radius), uintptr(radius))
+	selectObject.Call(hdc, oldBrush)
+	selectObject.Call(hdc, oldPen)
+	deleteObject.Call(brush)
+	if pen != 0 {
+		deleteObject.Call(pen)
+	}
+}
+
+// paintCard draws a filled rounded panel with a 1px border, the standard card
+// look used throughout the concept (soft surface + hairline edge).
+func paintCard(hdc uintptr, x, y, w, h int, fill, border uint32, radius int) {
+	brush, _, _ := createSolidBrush.Call(rgb(fill))
+	pen, _, _ := createPen.Call(0, 1, rgb(border))
+	oldBrush, _, _ := selectObject.Call(hdc, brush)
+	oldPen, _, _ := selectObject.Call(hdc, pen)
+	roundRect.Call(hdc, uintptr(x), uintptr(y), uintptr(x+w), uintptr(y+h), uintptr(radius), uintptr(radius))
+	selectObject.Call(hdc, oldBrush)
+	selectObject.Call(hdc, oldPen)
+	if brush != 0 {
+		deleteObject.Call(brush)
+	}
+	if pen != 0 {
+		deleteObject.Call(pen)
+	}
+}
+
+// paintDot draws a small filled circle (status indicators, timeline bullets).
+func paintDot(hdc uintptr, cx, cy, r int, color uint32) {
+	brush, _, _ := createSolidBrush.Call(rgb(color))
+	pen, _, _ := createPen.Call(0, 1, rgb(color))
+	ob, _, _ := selectObject.Call(hdc, brush)
+	op, _, _ := selectObject.Call(hdc, pen)
+	ellipse.Call(hdc, uintptr(cx-r), uintptr(cy-r), uintptr(cx+r), uintptr(cy+r))
+	selectObject.Call(hdc, ob)
+	selectObject.Call(hdc, op)
+	if brush != 0 {
+		deleteObject.Call(brush)
+	}
+	if pen != 0 {
+		deleteObject.Call(pen)
+	}
+}
+
+// paintGlow fakes a soft glow behind an accent tile by stacking a few
+// progressively larger, darker rounded rectangles (no alpha channel in GDI).
+func paintGlow(hdc uintptr, x, y, w, h int, color uint32, radius int) {
+	for i := 3; i >= 1; i-- {
+		g := i * 3
+		paintRoundPanel(hdc, x-g, y-g, w+2*g, h+2*g, uint32(mixHex(uiBgColor, color, 0.10*float64(4-i))), radius+g)
+	}
+}
+
+// mixHex is mix() but returns a 0xRRGGBB value (for callers that need a literal).
+func mixHex(a, b uint32, t float64) uint32 {
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	ar, ag, ab := (a>>16)&0xFF, (a>>8)&0xFF, a&0xFF
+	br, bg, bb := (b>>16)&0xFF, (b>>8)&0xFF, b&0xFF
+	r := uint32(float64(ar) + (float64(br)-float64(ar))*t)
+	g := uint32(float64(ag) + (float64(bg)-float64(ag))*t)
+	bl := uint32(float64(ab) + (float64(bb)-float64(ab))*t)
+	return r<<16 | g<<8 | bl
+}
+
+// Shared shell geometry. Child-control layout in layoutUI() and the viewer in
+// resizeViewer() are anchored to these same numbers, so keep them in sync.
+const (
+	navW     = 164
+	headerH  = 86
+	footerH  = 52
+	contentX = 184
+	gutter   = 24
+)
+
+func paintShell(hdc uintptr) {
+	var rc rect
+	getClientRect.Call(state.hwnd, uintptr(unsafe.Pointer(&rc)))
+	w := int(rc.Right - rc.Left)
+	h := int(rc.Bottom - rc.Top)
+	if w <= 0 || h <= 0 {
+		return
+	}
+
+	state.mu.Lock()
+	mode := state.mode
+	status := state.statusText
+	state.mu.Unlock()
+	viewer.mu.RLock()
+	connected := viewer.active
+	viewer.mu.RUnlock()
+
+	// ---- Canvas: subtle vertical navy gradient ----
+	vGradient(hdc, 0, 0, w, h, uiBgColor, uiBgColor2, 22)
+
+	paintTopBar(hdc, w, connected, status)
+	paintSidebar(hdc, h)
+
+	contentW := w - contentX - gutter
+
+	switch {
+	case connected:
+		paintConnectedChrome(hdc, w, h)
+	case mode == 0:
+		paintHome(hdc, w, h, contentW)
+	case mode == 1:
+		paintPageHeader(hdc, "Destek Al", "Bu kodu destek verecek kişiye iletin.")
+		paintText(hdc, "BAĞLANTI KODUNUZ", contentX, 300, 300, 18, uiLabelFont, uiMutedColor, txVLeft)
+		paintCard(hdc, contentX, 322, 782, 128, uiEditColor, uiBorderColor, 16)
+		paintText(hdc, "Kod oluşturulduğunda burada görünür ve otomatik paylaşılır.", contentX, 470, 782, 20, uiBodyFont, uiFaintColor, txVLeft)
+	case mode == 2:
+		paintPageHeader(hdc, "Destek Ver", "Karşı bilgisayarda görünen 6 haneli kodu girin.")
+		paintText(hdc, "BAĞLANTI KODU", contentX, 326, 300, 18, uiLabelFont, uiMutedColor, txVLeft)
+		paintText(hdc, "Kod yalnızca karşı tarafın onayıyla bağlantı kurar.", contentX, 436, 782, 20, uiBodyFont, uiFaintColor, txVLeft)
+	case mode == 10:
+		paintSettings(hdc, w)
+	case mode == 11:
+		paintAbout(hdc, w)
+	}
+
+	paintFooter(hdc, w, h, connected)
+}
+
+// paintTopBar draws the product header: logo, wordmark, and either the feature
+// chips (idle) or a live session pill (connected).
+func paintTopBar(hdc uintptr, w int, connected bool, status string) {
+	fillBand(hdc, 0, 0, w, headerH, rgb(uiBarColor))
+	fillBand(hdc, 0, headerH-1, w, 1, rgb(uiBorderColor))
+
+	// Logo tile with a soft glow.
+	paintGlow(hdc, 22, 19, 48, 48, uiAccentColor, 14)
+	paintRoundPanel(hdc, 22, 19, 48, 48, uiAccentColor, 14)
+	paintText(hdc, "▣", 22, 19, 48, 48, uiHeaderFont, uiTextColor, txMid)
+
+	paintText(hdc, "SECURE REMOTE DESKTOP", 84, 16, 430, 26, uiBrandFont, uiTextColor, txVLeft)
+	paintText(hdc, "Güvenli  •  Hızlı  •  Kolay  •  Her Yerden Destek", 85, 46, 470, 22, uiBodyFont, uiMutedColor, txVLeft)
+
+	if connected {
+		// Session identity + live indicator, right-aligned (leaves room for the
+		// red disconnect button that layoutUI places at the far right).
+		px := w - 470
+		if px > 540 {
+			paintCard(hdc, px, 22, 240, 42, uiPanelColor, uiBorderColor, 12)
+			paintDot(hdc, px+22, 43, 5, uiSuccess)
+			paintText(hdc, "Bağlı", px+38, 22, 80, 42, uiButtonFont, uiTextColor, txVLeft)
+			st := strings.TrimPrefix(status, "● ")
+			paintText(hdc, st, px+96, 22, 132, 42, uiSmallFont, uiMutedColor, txEnd)
+		}
+		return
+	}
+
+	// Feature chips, right-anchored so they track the window width.
+	chips := []struct{ icon, title, sub string }{
+		{"✓", "Güvenli Bağlantı", "Uçtan uca şifreleme"},
+		{"ϟ", "Yüksek Performans", "Düşük gecikme"},
+		{"▣", "Çoklu Monitör", "Tüm ekranlara erişim"},
+		{"⚙", "Kolay Kullanım", "Herkes için tasarlandı"},
+	}
+	chipW := 172
+	groupW := chipW * len(chips)
+	gx := w - gutter - groupW
+	if gx < 560 {
+		return // small window: keep the header uncluttered
+	}
+	for i, c := range chips {
+		x := gx + i*chipW
+		if i > 0 {
+			fillBand(hdc, x-6, 24, 1, 38, rgb(uiBorderColor))
+		}
+		paintRoundPanel(hdc, x, 24, 36, 36, uiPanelHi, 10)
+		paintText(hdc, c.icon, x, 24, 36, 36, uiIconFont, uiCyanColor, txMid)
+		paintText(hdc, c.title, x+46, 23, chipW-58, 18, uiButtonFont, uiTextColor, txEnd)
+		paintText(hdc, c.sub, x+46, 42, chipW-58, 16, uiSmallFont, uiMutedColor, txEnd)
+	}
+}
+
+// paintSidebar draws the left navigation rail with the active-page indicator.
+func paintSidebar(hdc uintptr, h int) {
+	navTop := headerH
+	navH := h - headerH - footerH
+	fillBand(hdc, 0, navTop, navW, navH, rgb(uiNavColor))
+	fillBand(hdc, navW-1, navTop, 1, navH, rgb(uiBorderColor))
+
+	page := sidebarPage.Load()
+	items := []struct {
+		label, icon string
+		page        int32
+	}{
+		{"Ana Sayfa", "⌂", 0},
+		{"Bağlantılar", "↔", 1},
+		{"Ayarlar", "⚙", 2},
+		{"Hakkında", "ⓘ", 3},
+	}
+	iy := navTop + 16
+	for _, it := range items {
+		active := page == it.page
+		var col, icol uint32 = uiMutedColor, uiFaintColor
+		if active {
+			paintRoundPanel(hdc, 10, iy, navW-20, 44, uiPanelHi, 10)
+			fillBand(hdc, 12, iy+9, 3, 26, rgb(uiAccentColor))
+			col = uiTextColor
+			icol = uiAccentColor
+		}
+		paintText(hdc, it.icon, 24, iy, 28, 44, uiIconFont, icol, txMid)
+		paintText(hdc, it.label, 58, iy, navW-66, 44, uiBodyFont, col, txVLeft)
+		iy += 52
+	}
+
+	paintText(hdc, "REMOTE SUPPORT", 22, h-footerH-44, navW-30, 16, uiLabelFont, uiFaintColor, txVLeft)
+	paintText(hdc, "Sürüm 1.0.0", 22, h-footerH-26, navW-30, 16, uiSmallFont, uiFaintColor, txVLeft)
+}
+
+func paintPageHeader(hdc uintptr, title, subtitle string) {
+	paintText(hdc, title, contentX, 104, 640, 34, uiHeaderFont, uiTextColor, txVLeft)
+	paintText(hdc, subtitle, contentX+2, 146, 720, 22, uiBodyFont, uiMutedColor, txVLeft)
+}
+
+// paintHome draws the two primary action cards (backgrounds are the owner-drawn
+// homeGet/homeGive buttons) and a "Son Bağlantılar" panel below them.
+func paintHome(hdc uintptr, w, h, contentW int) {
+	paintPageHeader(hdc, "Uzaktan Destek", "Bilgisayarınızı güvenli bir bağlantıyla yönetin veya destek alın.")
+
+	// "Son Bağlantılar" panel (empty state — no history is stored yet).
+	recentY := 400
+	recentH := h - footerH - recentY - 16
+	if recentH > 90 {
+		paintCard(hdc, contentX, recentY, contentW, recentH, uiPanelColor, uiBorderColor, 14)
+		paintText(hdc, "SON BAĞLANTILAR", contentX+22, recentY+18, 300, 18, uiLabelFont, uiMutedColor, txVLeft)
+		fillBand(hdc, contentX+22, recentY+44, contentW-44, 1, rgb(uiBorderColor))
+		paintText(hdc, "Henüz bağlantı geçmişi yok.", contentX+22, recentY+58, contentW-44, 22, uiSubtitleFont, uiFaintColor, txVLeft)
+		paintText(hdc, "Kurduğunuz oturumlar burada listelenecek.", contentX+22, recentY+84, contentW-44, 20, uiBodyFont, uiFaintColor, txVLeft)
+	}
+}
+
+// paintConnectedChrome draws the remote-desktop workspace frame: a toolbar
+// surface behind the screen/quality controls and a stats strip under the viewer.
+func paintConnectedChrome(hdc uintptr, w, h int) {
+	// Toolbar surface behind the monitor/resolution/action buttons.
+	paintCard(hdc, contentX, 98, w-contentX-gutter, 58, uiPanelColor, uiBorderColor, 12)
+	paintText(hdc, "UZAK MASAÜSTÜ", contentX, 60, 200, 18, uiLabelFont, uiFaintColor, txVLeft)
+
+	// Stats strip along the bottom of the viewer area (viewer sits at y=145,
+	// height h-210 → its bottom is h-65; the footer starts at h-52).
+	stripY := h - footerH - 13
+	res := map[int32]string{0: "Otomatik", 1080: "1080p", 720: "720p", 480: "480p"}[captureMaxHeight.Load()]
+	if res == "" {
+		res = "Otomatik"
+	}
+	stats := "Çözünürlük: " + res + "     •     Kodek: H.264     •     Uçtan uca şifreli"
+	paintText(hdc, stats, contentX+8, stripY, w-contentX-gutter-8, 12, uiSmallFont, uiFaintColor, txVLeft)
+}
+
+func paintSettings(hdc uintptr, w int) {
+	paintPageHeader(hdc, "Ayarlar", "Bağlantı, görüntü ve çalışma tercihleri.")
+	cw := w - contentX - gutter
+	paintCard(hdc, contentX, 190, cw, 108, uiPanelColor, uiBorderColor, 14)
+	paintText(hdc, "BAĞLANTI", contentX+24, 206, 200, 18, uiLabelFont, uiAccentColor, txVLeft)
+	paintText(hdc, "İnternet Signaling", contentX+24, 232, 260, 22, uiSubtitleFont, uiTextColor, txVLeft)
+	paintText(hdc, "WSS / WS adresi. Boş bırakılırsa LAN keşfi kullanılır.", contentX+24, 262, 320, 20, uiBodyFont, uiMutedColor, txVLeft)
+	paintCard(hdc, contentX, 314, cw, 112, uiPanelColor, uiBorderColor, 14)
+	paintText(hdc, "GÖRÜNTÜ", contentX+24, 330, 200, 18, uiLabelFont, uiAccentColor, txVLeft)
+	paintText(hdc, "Aktarım kalitesi ve en yüksek çözünürlük.", contentX+24, 356, 300, 20, uiBodyFont, uiMutedColor, txVLeft)
+	paintText(hdc, "Kalite", 520, 356, 120, 18, uiSmallFont, uiMutedColor, txVLeft)
+	paintText(hdc, "Maksimum yükseklik", 760, 356, 180, 18, uiSmallFont, uiMutedColor, txVLeft)
+	paintText(hdc, "Ayarlar uygulama yeniden başlatıldığında korunur.", contentX, 466, cw, 20, uiBodyFont, uiFaintColor, txVLeft)
+}
+
+func paintAbout(hdc uintptr, w int) {
+	paintPageHeader(hdc, "Hakkında", "Remote Support hakkında bilgi.")
+	cw := w - contentX - gutter
+	paintCard(hdc, contentX, 190, cw, 316, uiPanelColor, uiBorderColor, 16)
+	paintGlow(hdc, contentX+30, 222, 72, 72, uiAccentColor, 18)
+	paintRoundPanel(hdc, contentX+30, 222, 72, 72, uiAccentColor, 18)
+	paintText(hdc, "▣", contentX+30, 222, 72, 72, uiHeaderFont, uiTextColor, txMid)
+	paintText(hdc, "Remote Support", contentX+126, 224, 460, 32, uiHeaderFont, uiTextColor, txVLeft)
+	paintText(hdc, "Güvenli uzaktan masaüstü ve destek uygulaması.", contentX+126, 262, 520, 24, uiBodyFont, uiMutedColor, txVLeft)
+	fillBand(hdc, contentX+30, 318, cw-60, 1, rgb(uiBorderColor))
+	paintText(hdc, "PROGRAM YAZARI", contentX+30, 336, 240, 18, uiLabelFont, uiAccentColor, txVLeft)
+	paintText(hdc, "Hasan Güler", contentX+30, 360, 320, 30, uiSubtitleFont, uiTextColor, txVLeft)
+	paintText(hdc, "Sürüm 1.0.0     •     © 2026", contentX+30, 414, 420, 22, uiBodyFont, uiMutedColor, txVLeft)
+	paintText(hdc, "Uçtan uca şifreleme  •  Çoklu monitör  •  Ekran aktarımı  •  Dosya aktarımı", contentX+30, 452, cw-60, 22, uiBodyFont, uiMutedColor, txVLeft)
+}
+
+func paintFooter(hdc uintptr, w, h int, connected bool) {
+	footerY := h - footerH
+	fillBand(hdc, 0, footerY, w, footerH, rgb(uiBarColor))
+	fillBand(hdc, 0, footerY, w, 1, rgb(uiBorderColor))
+	var dotCol uint32 = uiFaintColor
+	if connected {
+		dotCol = uiSuccess
+	}
+	paintDot(hdc, 30, footerY+footerH/2, 5, dotCol)
+	label := "Bağlantı Durumu: " + map[bool]string{true: "Aktif", false: "Hazır"}[connected]
+	paintText(hdc, label, 44, footerY, 260, footerH, uiBodyFont, uiTextColor, txVLeft)
+	paintText(hdc, "Program Yazarı: Hasan Güler  •  © 2026", w-320, footerY, 296, footerH, uiBodyFont, uiMutedColor, txVRight)
+}
+
 func createControl(parent uintptr, class, text string, style uint32, x, y, w, h, id int) uintptr {
+	if class == "BUTTON" {
+		style |= 0x0000000B // BS_OWNERDRAW
+	}
 	r, _, _ := createWindow.Call(
 		0,
 		uintptr(unsafe.Pointer(utf16ptr(class))),
@@ -1173,6 +2236,22 @@ func createControl(parent uintptr, class, text string, style uint32, x, y, w, h,
 		uintptr(x), uintptr(y), uintptr(w), uintptr(h),
 		parent, uintptr(id), moduleHandle(), 0,
 	)
+	switch class {
+	case "BUTTON":
+		setControlFont(r, uiButtonFont)
+	case "EDIT":
+		setControlFont(r, uiEditFont)
+	case "STATIC":
+		if text == "Remote Support" {
+			setControlFont(r, uiHeaderFont)
+		} else if text == "Güvenli uzaktan destek" {
+			setControlFont(r, uiSubtitleFont)
+		} else if len(text) == 6 {
+			setControlFont(r, uiCodeFont)
+		} else {
+			setControlFont(r, uiBodyFont)
+		}
+	}
 	return r
 }
 
@@ -1194,8 +2273,9 @@ func show(hwnd uintptr) {
 }
 
 func clearChildren() {
+	clearResolutionButtons()
 	for _, h := range []uintptr{
-		state.homeGet, state.homeGive, state.codeLabel, state.remoteEdit, state.action, state.copy, state.back, state.fileSend,
+		state.homeGet, state.homeGive, state.codeLabel, state.remoteEdit, state.action, state.copy, state.back, state.fileSend, state.fullscreenButton, state.settingsEndpoint, state.settingsQuality, state.settingsResolution, state.settingsSave, state.settingsReset,
 	} {
 		hide(h)
 	}
@@ -1204,28 +2284,35 @@ func clearChildren() {
 func home() {
 	clearChildren()
 	state.mode = 0
-	show(state.header)
-	show(state.subtitle)
-	show(state.status)
 	setStatus("Bir işlem seç.")
-	show(state.homeGet)
-	show(state.homeGive)
+	layoutUI()
+}
+
+func clearResolutionButtons() {
+	state.mu.Lock()
+	buttons := append([]uintptr(nil), state.resolutionButtons...)
+	state.resolutionButtons = nil
+	state.mu.Unlock()
+	for _, h := range buttons {
+		if h != 0 {
+			destroyWindow.Call(h)
+		}
+	}
 }
 
 func supportMode() {
+	startEmbeddedSignaling()
 	clearChildren()
 	state.mode = 1
 	hide(state.homeGet)
 	hide(state.homeGive)
 
-	show(state.header)
-	show(state.subtitle)
-	show(state.status)
 	setText(state.action, "Kod oluşturuluyor...")
 	show(state.codeLabel)
 	show(state.action)
 	show(state.copy)
 	show(state.back)
+	layoutUI()
 
 	setStatus("Sunucuya bağlanılıyor...")
 	go startTarget()
@@ -1237,17 +2324,20 @@ func giveMode() {
 	hide(state.homeGet)
 	hide(state.homeGive)
 
-	show(state.header)
-	show(state.subtitle)
-	show(state.status)
 	show(state.remoteEdit)
 	show(state.action)
 	show(state.back)
 	setText(state.action, "BAĞLAN")
+	layoutUI()
 	setStatus("Karşı bilgisayarın 6 haneli kodunu girin.")
 }
 
 func startTarget() {
+	captureMaxHeight.Store(0)
+	activeTargetMonitorMu.Lock()
+	activeTargetMonitor = capture.Monitor{}
+	activeTargetMonitorOK = false
+	activeTargetMonitorMu.Unlock()
 	activeMonitor.Store(0)
 	remoteMonitorsMu.Lock()
 	remoteMonitors = nil
@@ -1347,6 +2437,10 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 }
 
 func startOperator(code string) {
+	activeTargetMonitorMu.Lock()
+	activeTargetMonitor = capture.Monitor{}
+	activeTargetMonitorOK = false
+	activeTargetMonitorMu.Unlock()
 	activeMonitor.Store(0)
 	remoteMonitorsMu.Lock()
 	remoteMonitors = nil
@@ -1453,11 +2547,9 @@ func showConnectedView() {
 	hide(state.action)
 	hide(state.back)
 	hide(state.remoteEdit)
-	hide(state.header)
-	hide(state.subtitle)
-	hide(state.status)
 	showViewer()
 	show(state.fileSend)
+	layoutUI()
 	resizeViewer()
 }
 
@@ -1624,9 +2716,14 @@ func updateMonitorButtons(count int) {
 		count = 0
 	}
 	clearMonitorButtons()
-	if count == 0 {
-		resizeViewer()
-		return
+	state.mu.Lock()
+	oldRes := append([]uintptr(nil), state.resolutionButtons...)
+	state.resolutionButtons = nil
+	state.mu.Unlock()
+	for _, h := range oldRes {
+		if h != 0 {
+			destroyWindow.Call(h)
+		}
 	}
 
 	buttons := make([]uintptr, 0, count)
@@ -1634,19 +2731,33 @@ func updateMonitorButtons(count int) {
 	const buttonH = 30
 	const gap = 8
 	for i := 0; i < count; i++ {
-		x := 20 + i*(buttonW+gap)
-		text := fmt.Sprintf("Monitör %d", i+1)
-		h := createControl(state.hwnd, "BUTTON", text, 0x00000001, x, 20, buttonW, buttonH, ID_MONITOR_BASE+i)
+		x := 178 + i*(buttonW+gap)
+		h := createControl(state.hwnd, "BUTTON", fmt.Sprintf("Monitör %d", i+1), 0x00000001, x, 102, buttonW, buttonH, ID_MONITOR_BASE+i)
 		buttons = append(buttons, h)
 	}
 	state.mu.Lock()
 	state.monitorButtons = buttons
-	fileBtn := state.fileSend
 	state.mu.Unlock()
-	if fileBtn != 0 {
-		show(fileBtn)
-		setWindowPos.Call(fileBtn, 0, 620, 20, 120, 30, 0)
+
+	res := []struct {
+		name string
+		id   int
+	}{
+		{"Otomatik", ID_RES_ORIGINAL}, {"1080p", ID_RES_1080P}, {"720p", ID_RES_720P}, {"480p", ID_RES_480P},
 	}
+	resButtons := make([]uintptr, 0, len(res))
+	startX := 178
+	if count > 0 {
+		startX += count * (buttonW + gap)
+	}
+	for i, r := range res {
+		x := startX + i*82
+		resButtons = append(resButtons, createControl(state.hwnd, "BUTTON", r.name, 0x00000001, x, 102, 76, 30, r.id))
+	}
+	state.mu.Lock()
+	state.resolutionButtons = resButtons
+	state.mu.Unlock()
+	showResolutionControls(!fullscreen.Load())
 	resizeViewer()
 }
 
@@ -1680,8 +2791,98 @@ func selectMonitor(index int) {
 	setStatus(fmt.Sprintf("● Monitör %d/%d isteniyor...", index+1, count))
 }
 
+func populateSettingsControls() {
+	cfg := currentSettings()
+	if state.settingsEndpoint != 0 {
+		setText(state.settingsEndpoint, cfg.SignalingURL)
+	}
+	if state.settingsQuality != 0 {
+		idx := 0
+		if cfg.Quality == 76 {
+			idx = 1
+		}
+		sendMessage.Call(state.settingsQuality, 0x014E, uintptr(idx), 0)
+	}
+	if state.settingsResolution != 0 {
+		idx := 0
+		switch cfg.MaxHeight {
+		case 1080:
+			idx = 1
+		case 720:
+			idx = 2
+		case 480:
+			idx = 3
+		}
+		sendMessage.Call(state.settingsResolution, 0x014E, uintptr(idx), 0)
+	}
+}
+
+func showSettings() {
+	clearChildren()
+	state.mu.Lock()
+	state.mode = 10
+	state.mu.Unlock()
+	populateSettingsControls()
+	layoutUI()
+	invalidateRect.Call(state.hwnd, 0, 1)
+}
+
+func showAbout() {
+	clearChildren()
+	state.mu.Lock()
+	state.mode = 11
+	state.mu.Unlock()
+	layoutUI()
+	invalidateRect.Call(state.hwnd, 0, 1)
+}
+
+func saveSettingsFromUI() {
+	cfg := currentSettings()
+	if state.settingsEndpoint != 0 {
+		cfg.SignalingURL = strings.TrimSpace(getText(state.settingsEndpoint))
+	}
+	if state.settingsQuality != 0 {
+		r, _, _ := sendMessage.Call(state.settingsQuality, 0x0147, 0, 0)
+		if r == 1 {
+			cfg.Quality = 76
+		} else {
+			cfg.Quality = 88
+		}
+	}
+	if state.settingsResolution != 0 {
+		r, _, _ := sendMessage.Call(state.settingsResolution, 0x0147, 0, 0)
+		switch r {
+		case 1:
+			cfg.MaxHeight = 1080
+		case 2:
+			cfg.MaxHeight = 720
+		case 3:
+			cfg.MaxHeight = 480
+		default:
+			cfg.MaxHeight = 0
+		}
+	}
+	settingsMu.Lock()
+	appCfg = cfg
+	settingsMu.Unlock()
+	saveSettings()
+	captureMaxHeight.Store(int32(cfg.MaxHeight))
+	setStatus("Ayarlar kaydedildi.")
+	invalidateRect.Call(state.hwnd, 0, 1)
+}
+
+func resetSettingsUI() {
+	settingsMu.Lock()
+	appCfg = appSettings{Quality: 88, MaxHeight: 0, InputEnabled: true}
+	settingsMu.Unlock()
+	saveSettings()
+	populateSettingsControls()
+	captureMaxHeight.Store(0)
+	setStatus("Ayarlar varsayılan değerlere döndürüldü.")
+}
+
 func onCommand(id int) {
-	if id >= ID_MONITOR_BASE {
+	if id >= ID_MONITOR_BASE && id < ID_RES_ORIGINAL {
 		selectMonitor(id - ID_MONITOR_BASE)
 		return
 	}
@@ -1697,6 +2898,30 @@ func onCommand(id int) {
 		copyCode()
 	case ID_FILE_SEND:
 		go sendFileToPeer()
+	case ID_RES_ORIGINAL:
+		setRemoteResolution(0)
+	case ID_RES_1080P:
+		setRemoteResolution(1080)
+	case ID_RES_720P:
+		setRemoteResolution(720)
+	case ID_RES_480P:
+		setRemoteResolution(480)
+	case ID_FULLSCREEN:
+		toggleFullscreen()
+	case ID_SETTINGS:
+		sidebarPage.Store(2)
+		showSettings()
+		return
+	case ID_ABOUT:
+		sidebarPage.Store(3)
+		showAbout()
+		return
+	case ID_SETTINGS_SAVE:
+		saveSettingsFromUI()
+		return
+	case ID_SETTINGS_RESET:
+		resetSettingsUI()
+		return
 	case ID_CONNECT:
 		code := normalizeCode(getText(state.remoteEdit))
 		if code == "" {
@@ -1732,12 +2957,181 @@ func stopSession() {
 	}
 }
 
+type drawItemStruct struct {
+	CtlType    uint32
+	CtlID      uint32
+	ItemID     uint32
+	ItemAction uint32
+	ItemState  uint32
+	HwndItem   uintptr
+	HDC        uintptr
+	RcItem     rect
+	ItemData   uintptr
+}
+
+func buttonLabel(hwnd uintptr) string {
+	buf := make([]uint16, 128)
+	n, _, _ := getWindowText.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	if n == 0 {
+		return ""
+	}
+	return syscall.UTF16ToString(buf[:n])
+}
+
+func drawOwnerButton(dis *drawItemStruct) {
+	if dis == nil || dis.HDC == 0 {
+		return
+	}
+	hdc := dis.HDC
+	r := dis.RcItem
+	id := int(dis.CtlID)
+	x, y := int(r.Left), int(r.Top)
+	bw, bh := int(r.Right-r.Left), int(r.Bottom-r.Top)
+	pressed := dis.ItemState&0x0001 != 0 // ODS_SELECTED
+	viewer.mu.RLock()
+	connected := viewer.active
+	viewer.mu.RUnlock()
+
+	// ---- Primary action cards (Destek Al / Destek Ver) ----
+	if id == ID_GET_SUPPORT || id == ID_GIVE_SUPPORT {
+		var fill, border uint32 = uiPanelColor, uiBorderColor
+		if pressed {
+			fill = uiPanelHi
+			border = uiAccentColor
+		}
+		paintCard(hdc, x, y, bw, bh, fill, border, 16)
+
+		icon := "▣"
+		title := "DESTEK VER"
+		desc := "Karşı bilgisayara güvenli şekilde bağlanın."
+		cta := "Bağlan  →"
+		if id == ID_GET_SUPPORT {
+			icon = "♙"
+			title = "DESTEK AL"
+			desc = "Bilgisayarınıza uzaktan bağlanılmasına izin verin."
+			cta = "Kod Oluştur  →"
+		}
+		// Accent icon medallion with glow.
+		paintGlow(hdc, x+24, y+24, 56, 56, uiAccentColor, 16)
+		paintRoundPanel(hdc, x+24, y+24, 56, 56, uiAccentColor, 16)
+		paintText(hdc, icon, x+24, y+24, 56, 56, uiHeaderFont, uiTextColor, txMid)
+
+		paintText(hdc, title, x+96, y+28, bw-116, 26, uiTitleFont, uiTextColor, txVLeft)
+		paintText(hdc, desc, x+96, y+58, bw-116, 44, uiBodyFont, uiMutedColor, txWrap)
+
+		// CTA chip pinned to the bottom-left of the card.
+		var chipCol uint32 = uiAccentColor
+		if pressed {
+			chipCol = uiAccentHi
+		}
+		paintText(hdc, cta, x+26, y+bh-40, bw-52, 22, uiButtonFont, chipCol, txVLeft)
+		return
+	}
+
+	// ---- Regular buttons: pill styling by role ----
+	text := buttonLabel(dis.HwndItem)
+	font := uiButtonFont
+	var fg uint32 = uiTextColor
+	radius := 12
+
+	var fill, border uint32
+	switch {
+	case id == ID_CONNECT:
+		// Primary filled accent pill (faux gradient: accent body + lighter cap).
+		fill, border = uiAccentColor, uiAccentColor
+		if pressed {
+			fill, border = uiAccentDim, uiAccentDim
+		}
+		fg = 0xFFFFFF
+		font = uiSubtitleFont
+		paintCard(hdc, x, y, bw, bh, fill, border, radius)
+		if !pressed && bh > 10 {
+			paintRoundPanel(hdc, x+2, y+2, bw-4, bh/2, mixHex(uiAccentColor, uiAccentHi, 0.5), radius)
+		}
+		paintText(hdc, text, x+10, y, bw-20, bh, font, fg, txMid|txEnd)
+		return
+	case id == ID_BACK && connected:
+		// Destructive: disconnect.
+		fill, border, fg = uiDanger, uiDanger, 0xFFFFFF
+		if pressed {
+			fill, border = mixHex(uiDanger, 0x000000, 0.15), uiDanger
+		}
+		font = uiButtonFont
+	case id == ID_COPY_CODE:
+		fill, border = uiPanelHi, uiBorderColor
+		fg = uiAccentColor
+		if pressed {
+			fill = uiPanelColor
+		}
+	default:
+		// Back (idle), file send, fullscreen, monitor & resolution pills.
+		fill, border = uiPanelHi, uiBorderColor
+		fg = uiTextColor
+		if pressed {
+			fill, border = uiAccentColor, uiAccentColor
+			fg = 0xFFFFFF
+		}
+	}
+
+	paintCard(hdc, x, y, bw, bh, fill, border, radius)
+	paintText(hdc, text, x+10, y, bw-20, bh, font, fg, txMid|txEnd)
+}
+
 func wndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 	switch m {
+	case 0x0014: // WM_ERASEBKGND
+		return 1
 	case 0x0002: // WM_DESTROY
 		stopSession()
 		postQuit.Call(0)
 		return 0
+	case 0x0138: // WM_CTLCOLORSTATIC
+		hdc := wParam
+		// The only prominent static is the connection-code label; give it the
+		// input-field surface so it reads as the code box painted behind it.
+		setTextColor.Call(hdc, rgb(uiTextColor))
+		setBkMode.Call(hdc, 1) // TRANSPARENT
+		return uiEditBrush
+	case 0x0133: // WM_CTLCOLOREDIT
+		hdc := wParam
+		setTextColor.Call(hdc, rgb(uiTextColor)) // was near-black on a dark field: invisible
+		setBkMode.Call(hdc, 2)                   // OPAQUE
+		return uiEditBrush
+	case 0x0135: // WM_CTLCOLORBTN
+		hdc := wParam
+		setTextColor.Call(hdc, rgb(uiTextColor))
+		setBkMode.Call(hdc, 1)
+		return uiPanelBrush
+	case 0x002B: // WM_DRAWITEM
+		dis := (*drawItemStruct)(unsafe.Pointer(lParam))
+		if dis != nil && dis.CtlType == 4 { // ODT_BUTTON
+			drawOwnerButton(dis)
+			return 1
+		}
+		return 0
+	case 0x0202: // WM_LBUTTONUP
+		x := int(int16(lParam & 0xffff))
+		y := int(int16((lParam >> 16) & 0xffff))
+		// Left navigation rows: painted at y = 102 + 52*i, height 44 (see paintSidebar).
+		if x >= 0 && x < navW && y >= 96 {
+			switch {
+			case y >= 96 && y < 148:
+				sidebarPage.Store(0)
+				home()
+				return 0
+			case y >= 148 && y < 200:
+				sidebarPage.Store(1)
+				return 0
+			case y >= 200 && y < 252:
+				sidebarPage.Store(2)
+				showSettings()
+				return 0
+			case y >= 252 && y < 304:
+				sidebarPage.Store(3)
+				showAbout()
+				return 0
+			}
+		}
 	case 0x0111: // WM_COMMAND
 		onCommand(int(wParam & 0xffff))
 		return 0
@@ -1747,18 +3141,32 @@ func wndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 		setStatus(fmt.Sprintf("● Uzak bilgisayarda %d monitör bulundu", count))
 		return 0
 	case 0x0005: // WM_SIZE
+		layoutUI()
 		resizeViewer()
 		return 0
 	case 0x000F: // WM_PAINT
-		r, _, _ := defWindowProc.Call(hwnd, uintptr(m), wParam, lParam)
-		return r
+		var ps paintStruct
+		hdc, _, _ := beginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
+		if hdc != 0 {
+			paintShell(hdc)
+			endPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
+		}
+		return 0
 	}
 	r, _, _ := defWindowProc.Call(hwnd, uintptr(m), wParam, lParam)
 	return r
 }
 
+func addComboItems(hwnd uintptr, items ...string) {
+	for _, item := range items {
+		sendMessage.Call(hwnd, 0x0143, 0, uintptr(unsafe.Pointer(utf16ptr(item))))
+	}
+}
+
 func main() {
 	runtime.LockOSThread()
+	loadSettings()
+	initUITheme()
 
 	class := utf16ptr(windowClass)
 	wc := wndclassex{
@@ -1766,7 +3174,7 @@ func main() {
 		LpfnWndProc:   syscall.NewCallback(wndProc),
 		HInstance:     moduleHandle(),
 		HCursor:       func() uintptr { r, _, _ := loadCursor.Call(0, 32512); return r }(),
-		HbrBackground: 6, // COLOR_WINDOW + 1
+		HbrBackground: 0, // parent paints the background in WM_PAINT
 		LpszClassName: class,
 	}
 	registerClass.Call(uintptr(unsafe.Pointer(&wc)))
@@ -1789,32 +3197,45 @@ func main() {
 
 	state.header = createControl(hwnd, "STATIC", "Remote Support", 0x00000000, 40, 30, 650, 45, 0)
 	state.subtitle = createControl(hwnd, "STATIC", "Güvenli uzaktan destek", 0x00000000, 40, 72, 650, 28, 0)
-	state.status = createControl(hwnd, "STATIC", "Bir işlem seç.", 0, 40, 465, 650, 35, 0)
+	state.status = createControl(hwnd, "STATIC", "Bir işlem seç.", 0, 40, 585, 900, 32, 0)
 
-	getSupport := createControl(hwnd, "BUTTON", "DESTEK ALIYORUM", 0x00000001, 80, 185, 280, 70, ID_GET_SUPPORT)
-	giveSupport := createControl(hwnd, "BUTTON", "DESTEK VERİYORUM", 0x00000001, 400, 185, 280, 70, ID_GIVE_SUPPORT)
+	getSupport := createControl(hwnd, "BUTTON", "DESTEK ALIYORUM", 0x00000001, 90, 205, 380, 100, ID_GET_SUPPORT)
+	giveSupport := createControl(hwnd, "BUTTON", "DESTEK VERİYORUM", 0x00000001, 510, 205, 380, 100, ID_GIVE_SUPPORT)
 	state.homeGet = getSupport
 	state.homeGive = giveSupport
-	state.action = createControl(hwnd, "BUTTON", "BAĞLAN", 0x00000001, 250, 300, 260, 52, ID_CONNECT)
-	state.copy = createControl(hwnd, "BUTTON", "Kodu kopyala", 0x00000001, 520, 300, 160, 52, ID_COPY_CODE)
-	state.back = createControl(hwnd, "BUTTON", "← Geri", 0x00000001, 40, 300, 120, 52, ID_BACK)
-	state.fileSend = createControl(hwnd, "BUTTON", "Dosya Gönder", 0x00000001, 620, 20, 110, 30, ID_FILE_SEND)
+	state.action = createControl(hwnd, "BUTTON", "BAĞLAN", 0x00000001, 330, 365, 320, 58, ID_CONNECT)
+	state.copy = createControl(hwnd, "BUTTON", "Kodu kopyala", 0x00000001, 665, 365, 180, 58, ID_COPY_CODE)
+	state.back = createControl(hwnd, "BUTTON", "← Geri", 0x00000001, 90, 365, 180, 58, ID_BACK)
+	state.fileSend = createControl(hwnd, "BUTTON", "Dosya Gönder", 0x00000001, 760, 14, 100, 30, ID_FILE_SEND)
+	state.fullscreenButton = createControl(hwnd, "BUTTON", "Tam Ekran", 0x00000001, 865, 14, 95, 30, ID_FULLSCREEN)
 	hide(state.fileSend)
+	hide(state.fullscreenButton)
 
-	state.codeLabel = createControl(hwnd, "STATIC", newCode(), 0x00000001|0x00000200|0x00000080, 180, 185, 400, 60, 0)
-	state.remoteEdit = createControl(hwnd, "EDIT", "", 0x00000001|0x00002000, 170, 185, 420, 50, ID_REMOTE_CODE)
+	state.codeLabel = createControl(hwnd, "STATIC", newCode(), 0x00000001|0x00000200|0x00000080, 250, 190, 480, 90, 0)
+	state.remoteEdit = createControl(hwnd, "EDIT", "", 0x00000001|0x00002000, 250, 190, 480, 58, ID_REMOTE_CODE)
+
+	state.settingsEndpoint = createControl(hwnd, "EDIT", "", 0x00000001|0x00002000, 520, 235, 520, 44, 0)
+	state.settingsQuality = createControl(hwnd, "COMBOBOX", "", 0x0003|0x00002000, 520, 335, 180, 40, 0)
+	state.settingsResolution = createControl(hwnd, "COMBOBOX", "", 0x0003|0x00002000, 760, 335, 180, 40, 0)
+	addComboItems(state.settingsQuality, "Yüksek", "Dengeli")
+	addComboItems(state.settingsResolution, "Otomatik", "1920 × 1080", "1280 × 720", "854 × 480")
+	state.settingsSave = createControl(hwnd, "BUTTON", "Ayarları Kaydet", 0x00000001, 520, 500, 180, 44, ID_SETTINGS_SAVE)
+	state.settingsReset = createControl(hwnd, "BUTTON", "Varsayılanlara Dön", 0x00000001, 720, 500, 220, 44, ID_SETTINGS_RESET)
 
 	hide(state.action)
 	hide(state.copy)
 	hide(state.back)
 	hide(state.codeLabel)
 	hide(state.remoteEdit)
+	hide(state.settingsEndpoint)
+	hide(state.settingsQuality)
+	hide(state.settingsResolution)
+	hide(state.settingsSave)
+	hide(state.settingsReset)
 
-	show(state.header)
-	show(state.subtitle)
-	show(state.status)
-	show(state.homeGet)
-	show(state.homeGive)
+	state.mode = 0
+	state.statusText = "Bir işlem seç."
+	layoutUI()
 
 	showWindow.Call(hwnd, 1)
 	updateWindow.Call(hwnd)
