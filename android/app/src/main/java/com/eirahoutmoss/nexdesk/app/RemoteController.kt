@@ -66,7 +66,17 @@ class RemoteController(private val prefs: Prefs, private val appVersion: String)
         synchronized(lock) { bitmap = null }
     }
 
+    /** True for a registered-device session (already saved, nothing to offer). */
+    var isDevice = false
+        private set
+    /** One-shot message after "save this computer" succeeded. */
+    val savedNotice = mutableStateOf<String?>(null)
+
+    /** Asks the remote user to allow permanent access to this computer. */
+    fun requestSaveDevice(): Boolean = session?.requestSaveDevice() ?: false
+
     fun connectCode(code: String) {
+        isDevice = false
         title = code
         newSession().connectCode(code)
     }
@@ -75,6 +85,7 @@ class RemoteController(private val prefs: Prefs, private val appVersion: String)
     fun connectLink(link: String): Boolean {
         val code = Nexdesk.linkCode(link)
         if (code.isNullOrBlank()) return false
+        isDevice = false
         title = code
         return newSession().connectLink(link)
     }
@@ -83,6 +94,7 @@ class RemoteController(private val prefs: Prefs, private val appVersion: String)
     fun stats(): String = session?.stats() ?: "Bağlı değil"
 
     fun connectDevice(id: String, pass: String, label: String) {
+        isDevice = true
         title = label.ifBlank { id }
         newSession().connectDevice(id, pass)
     }
@@ -137,6 +149,12 @@ class RemoteController(private val prefs: Prefs, private val appVersion: String)
             closedReason.value = reason
             phase.value = Phase.Idle
             session = null
+        }
+        override fun onDeviceSaved(id: String, pass: String) = ui {
+            val old = prefs.devices().firstOrNull { it.id.equals(id, ignoreCase = true) }
+            prefs.saveDevice(SavedDevice(id, old?.label ?: "", pass))
+            isDevice = true
+            savedNotice.value = "$id kayıtlı cihazlara eklendi — bir dahaki sefere kod gerekmez."
         }
         override fun onFrame(f: Frame) {
             if (myGen == gen) handleFrame(f)

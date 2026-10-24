@@ -389,6 +389,14 @@ fun SessionScreen(ctl: RemoteController) {
     var tf by remember { mutableStateOf(TextFieldValue(SENTINEL, TextRange(SENTINEL.length))) }
 
     BackHandler { ctl.disconnect() }
+    val savedMsg by ctl.savedNotice
+    val sctx = LocalContext.current
+    LaunchedEffect(savedMsg) {
+        savedMsg?.let {
+            android.widget.Toast.makeText(sctx, it, android.widget.Toast.LENGTH_LONG).show()
+            ctl.savedNotice.value = null
+        }
+    }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         Column(Modifier.fillMaxSize()) {
@@ -495,7 +503,12 @@ fun InfoDialog(ctl: RemoteController, onDismiss: () -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Kapat") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Kapat") } },
+        dismissButton = {
+            if (!ctl.isDevice) {
+                TextButton(onClick = { if (ctl.requestSaveDevice()) onDismiss() }) { Text("Bu bilgisayarı kaydet") }
+            }
+        }
     )
 }
 
