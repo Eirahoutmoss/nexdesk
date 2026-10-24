@@ -50,7 +50,12 @@ func paintShell(hdc uintptr) {
 			paintPageHeader(hdc, "Cihaz Erişimi", "Teknisyen bağlantısı bekleniyor.")
 			paintCard(hdc, contentX, 322, 782, 120, uiPanelColor, uiBorderColor, 16)
 			paintText(hdc, "DURUM", contentX+24, 344, 300, 16, uiLabelFont, uiAccentColor, txVLeft)
-			paintText(hdc, "● Etkin — teknisyen kimlik ve parola ile bağlanabilir", contentX+24, 366, 740, 24, uiSubtitleFont, uiSuccess, txVLeft)
+			if e := getDeviceError(); e != "" {
+				paintText(hdc, "● Sunucuya kaydolunamadı — teknisyen şu an bağlanamaz", contentX+24, 366, 740, 24, uiSubtitleFont, uiWarn, txVLeft)
+				paintText(hdc, e, contentX+24, 456, 760, 40, uiSmallFont, uiWarn, txWrap)
+			} else {
+				paintText(hdc, "● Etkin — teknisyen kimlik ve parola ile bağlanabilir", contentX+24, 366, 740, 24, uiSubtitleFont, uiSuccess, txVLeft)
+			}
 			paintText(hdc, "Cihaz kimliği:  "+effectiveDeviceID(), contentX+24, 400, 740, 20, uiBodyFont, uiMutedColor, txVLeft)
 			break
 		}
@@ -428,6 +433,9 @@ func paintDeviceAccess(hdc uintptr, w int) {
 	if deviceModeActive.Load() {
 		st = "● Etkin — teknisyen bağlantısı bekleniyor"
 		sc = uiSuccess
+		if e := getDeviceError(); e != "" {
+			st, sc = "● Kaydolunamadı: "+e, uiWarn
+		}
 	}
 	paintText(hdc, st, contentX+24, 540, cw, 20, uiBodyFont, sc, txVLeft)
 	paintText(hdc, "Parola sunucuda yalnızca şifreli özet (salt + SHA-256) olarak tutulur.", contentX+24, 566, cw, 18, uiSmallFont, uiFaintColor, txVLeft)

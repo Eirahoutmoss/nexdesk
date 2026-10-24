@@ -3,6 +3,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"context"
 	"os"
 	"strings"
@@ -105,10 +107,16 @@ func deviceModeLoop(id, pass string, gen int64) {
 			continue
 		}
 		c.App = appVersion
+		c.DeviceOwner = ensureDeviceOwner()
 		if err := c.CreateDevice(ctx, id, pass); err != nil {
 			_ = c.Close(context.Background())
 			cancel()
 			netlogf("Cihaz kaydı başarısız: %v", err)
+			if strings.Contains(err.Error(), "device_auth_failed") {
+				setDeviceError("Bu cihaz kimliği sunucuda başka bir parolayla kayıtlı. Eski parolayı girin, farklı bir cihaz kimliği seçin ya da sunucu yöneticisi eski kaydı silsin.")
+			} else {
+				setDeviceError("Sunucuya kaydolunamadı: " + err.Error())
+			}
 			// rate_limited means we (or a prior build's duplicate loop) hit the
 			// server too fast; wait well clear of its window before retrying.
 			wait := 15 * time.Second
@@ -119,6 +127,7 @@ func deviceModeLoop(id, pass string, gen int64) {
 			continue
 		}
 		netlogf("Cihaz erişimi çevrimiçi: %s (sunucu=%s)", id, ep)
+		setDeviceError("")
 		// The device link keeps its own context and socket: a "Destek Al"
 		// code session (state.ctx/state.sig) can run next to it, and ending
 		// that session must not take the device offline.
@@ -174,6 +183,40 @@ func waitSessionEnd(gen int64) {
 	}
 }
 
+// deviceError is shown on the device-access screens while registration
+// fails ("" = registered / trying normally).
+var deviceError atomic.Value
+
+func setDeviceError(s string) {
+	if old, _ := deviceError.Load().(string); old == s {
+		return
+	}
+	deviceError.Store(s)
+	if state.hwnd != 0 {
+		invalidateRect.Call(state.hwnd, 0, 0)
+	}
+}
+
+func getDeviceError() string { s, _ := deviceError.Load().(string); return s }
+
+// ensureDeviceOwner returns this machine's owner secret, creating it once.
+func ensureDeviceOwner() string {
+	cfg := currentSettings()
+	if len(cfg.DeviceOwner) >= 32 {
+		return cfg.DeviceOwner
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	cfg.DeviceOwner = hex.EncodeToString(b)
+	settingsMu.Lock()
+	appCfg.DeviceOwner = cfg.DeviceOwner
+	settingsMu.Unlock()
+	saveSettings()
+	return cfg.DeviceOwner
+}
+
 var (
 	deviceLinkMu     sync.Mutex
 	deviceLinkSig    *clientsignaling.Client
@@ -205,6 +248,7 @@ func stopDeviceMode() {
 	}
 	deviceModeGen.Add(1) // supersede the running loop
 	deviceModeActive.Store(false)
+	setDeviceError("")
 	releaseDeviceRole()
 	deviceLinkMu.Lock()
 	c, cancel := deviceLinkSig, deviceLinkCancel

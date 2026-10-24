@@ -73,6 +73,41 @@ func TestDeviceReRegisterNeedsPassword(t *testing.T) {
 	}
 }
 
+// The owner secret lets a device change its password; without it a new
+// password is refused (someone who only knows the id cannot take over).
+func TestDeviceOwnerChangesPassword(t *testing.T) {
+	s := NewServer()
+	defer s.Close()
+	if err := s.authDeviceOwner("DEV-O", "eskiparola", "sahip-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.authDeviceOwner("DEV-O", "yeniparola", "baskasi"); err == nil {
+		t.Fatal("wrong owner changed the password")
+	}
+	if err := s.authDeviceOwner("DEV-O", "yeniparola", ""); err == nil {
+		t.Fatal("no owner changed the password")
+	}
+	if err := s.authDeviceOwner("DEV-O", "yeniparola", "sahip-1"); err != nil {
+		t.Fatalf("owner could not change password: %v", err)
+	}
+	if err := s.authDevice("DEV-O", "yeniparola", false); err != nil {
+		t.Fatalf("technician with new password: %v", err)
+	}
+	if err := s.authDevice("DEV-O", "eskiparola", false); err == nil {
+		t.Fatal("old password still accepted")
+	}
+	// legacy registration (no owner) adopts one with the right password
+	if err := s.authDeviceOwner("DEV-L", "parola1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.authDeviceOwner("DEV-L", "parola1", "sahip-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.authDeviceOwner("DEV-L", "parola2", "sahip-2"); err != nil {
+		t.Fatalf("adopted owner could not change password: %v", err)
+	}
+}
+
 func TestDevicePersistentSessionNotExpired(t *testing.T) {
 	s := NewServer()
 	defer s.Close()
