@@ -5,6 +5,9 @@
 #   PUBLIC_IP=1.2.3.4 LAN_IP=10.0.0.5   adresleri elle ver
 #   KEEP_PLAIN=0                        şifresiz ws://:8091 girişini kapat (tüm istemciler 1.2.0+ olunca)
 #   MIN_CLIENT_V=2                      eski (1.1.x) istemcileri reddet
+#   WEB=0                               tarayıcı/iPhone uygulamasını (HTTPS 443) kapat
+#   WEB_DOMAIN=destek.kurum.tr          kendi alan adınız (varsayılan: <dış-ip>.sslip.io)
+#   ACME_EMAIL=bt@kurum.tr              Let's Encrypt bildirim adresi (isteğe bağlı)
 # Örnek: PUBLIC_IP=1.2.3.4 KEEP_PLAIN=0 sudo -E bash sunucu-kur.sh
 set -euo pipefail
 
@@ -17,9 +20,11 @@ RELAY_MIN=49160
 RELAY_MAX=49200
 KEEP_PLAIN="${KEEP_PLAIN:-1}"
 MIN_CLIENT_V="${MIN_CLIENT_V:-0}"
-LATEST_APP="${LATEST_APP:-1.3.0}"   # istemcilere "en son sürüm" olarak bildirilir
+LATEST_APP="${LATEST_APP:-1.5.0}"   # istemcilere "en son sürüm" olarak bildirilir
 MIN_APP="${MIN_APP:-}"              # bundan eski istemcilere "güncelle" uyarısı (boş=kapalı)
 HERE="$(cd "$(dirname "$0")" && pwd)"
+WEB="${WEB:-1}"
+WEB_PORT=443
 
 [ "$(id -u)" -eq 0 ] || { echo "Lütfen sudo ile çalıştırın: sudo bash $0"; exit 1; }
 [ -n "$LAN_IP" ] || { echo "Yerel IP bulunamadı. LAN_IP=... ile verin."; exit 1; }
@@ -27,6 +32,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 [ -f "$HERE/nexdesk-signaling" ] || { echo "nexdesk-signaling dosyası bu betikle aynı klasörde olmalı."; exit 1; }
 
 echo "== Dış IP: $PUBLIC_IP   Yerel IP: $LAN_IP"
+# Tarayıcılar pinli öz-imzalı sertifikayı kabul etmez: web uygulaması gerçek bir
+# alan adı + Let's Encrypt sertifikası ister. sslip.io, IP'yi hesap gerektirmeden
+# alan adına çevirir (1.2.3.4 -> 1-2-3-4.sslip.io).
+WEB_DOMAIN="${WEB_DOMAIN:-${PUBLIC_IP//./-}.sslip.io}"
 
 # Port çakışması kontrolü (Docker vb. kullanıyor olabilir)
 for p in "tcp:$SIG_PORT" "tcp:$TLS_PORT" "udp:$TURN_PORT" "tcp:$TURN_PORT"; do
@@ -117,6 +126,14 @@ REMOTESUPPORT_LATEST_APP=$LATEST_APP
 REMOTESUPPORT_MIN_APP=$MIN_APP
 EOF
 )
+if [ "$WEB" = "1" ]; then
+  ( umask 077; cat >> /etc/nexdesk/signaling.env <<EOF
+REMOTESUPPORT_WEB_DOMAIN=$WEB_DOMAIN
+REMOTESUPPORT_WEB_ADDR=0.0.0.0:$WEB_PORT
+REMOTESUPPORT_ACME_EMAIL=${ACME_EMAIL:-}
+EOF
+  )
+fi
 
 cat > /etc/systemd/system/nexdesk-signaling.service <<EOF
 [Unit]
@@ -130,6 +147,9 @@ EnvironmentFile=/etc/nexdesk/signaling.env
 StateDirectory=nexdesk-signaling
 Environment=REMOTESUPPORT_TLS_DIR=/var/lib/nexdesk-signaling
 ExecStart=/usr/local/bin/nexdesk-signaling
+# Web uygulaması 443'ü dinler; yalnızca bu yetki verilir (root değil).
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 Restart=always
 RestartSec=3
 DynamicUser=yes
@@ -147,7 +167,7 @@ systemctl restart nexdesk-signaling
 # Oracle Cloud vb. imajlar: ufw kapalı ama iptables INPUT zinciri 22 dışındakileri REJECT eder.
 if iptables -S INPUT 2>/dev/null | grep -q -- "-j REJECT"; then
   echo "== iptables kuralları ekleniyor"
-  for r in "-p tcp --dport $SIG_PORT" "-p tcp --dport $TLS_PORT" "-p udp --dport $TURN_PORT" "-p tcp --dport $TURN_PORT" "-p udp --dport $RELAY_MIN:$RELAY_MAX"; do
+  for r in "-p tcp --dport $WEB_PORT" "-p tcp --dport $SIG_PORT" "-p tcp --dport $TLS_PORT" "-p udp --dport $TURN_PORT" "-p tcp --dport $TURN_PORT" "-p udp --dport $RELAY_MIN:$RELAY_MAX"; do
     # shellcheck disable=SC2086
     iptables -C INPUT $r -j ACCEPT 2>/dev/null || iptables -I INPUT 1 $r -j ACCEPT
   done
@@ -158,6 +178,7 @@ if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
   echo "== ufw kuralları ekleniyor"
   ufw allow $SIG_PORT/tcp >/dev/null
   ufw allow $TLS_PORT/tcp >/dev/null
+  ufw allow $WEB_PORT/tcp >/dev/null
   ufw allow $TURN_PORT/udp >/dev/null
   ufw allow $TURN_PORT/tcp >/dev/null
   ufw allow $RELAY_MIN:$RELAY_MAX/udp >/dev/null
@@ -184,7 +205,10 @@ coturn            : $(ok coturn)
 nexdesk-signaling : $(ok nexdesk-signaling)
 şifresiz ws:8091  : $([ "$KEEP_PLAIN" = "0" ] && echo "KAPALI" || echo "açık (geçiş dönemi — herkes 1.2.0'a geçince KEEP_PLAIN=0 ile kapatın)")
 
+web uygulaması     : $([ "$WEB" = "1" ] && echo "https://$WEB_DOMAIN/  (iPhone/Android/bilgisayar tarayıcısı)" || echo "KAPALI")
+
 --- IT'den istenecek port yönlendirmeleri ($PUBLIC_IP -> $LAN_IP) ---
+  TCP  $WEB_PORT    (web uygulaması, HTTPS — WEB=0 ise gerekmez)
   TCP  $TLS_PORT   (şifreli signaling)
   TCP  $SIG_PORT   (yalnızca geçiş döneminde)
   UDP  $TURN_PORT  ve  TCP $TURN_PORT
@@ -210,5 +234,6 @@ cat > /root/nexdesk-sunucu.txt <<EOF
 Signaling (wss, pinli): $WSS_PUB, $WSS_LAN
 Sertifika pini       : $PIN
 TURN                 : oturum başına sunucu üretir (sır: /etc/nexdesk/turn-secret)
+Web uygulaması       : $([ "$WEB" = "1" ] && echo "https://$WEB_DOMAIN/" || echo "kapalı")
 EOF
 chmod 600 /root/nexdesk-sunucu.txt
