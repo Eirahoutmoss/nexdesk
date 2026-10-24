@@ -207,7 +207,7 @@ func layoutUI() {
 			moveControl(state.stayOpen, contentX, 214, 150, 40, idleWarn.Load())
 			return
 		}
-		if deviceModeActive.Load() {
+		if deviceModeActive.Load() && !codeSessionActive.Load() {
 			// Device-access wait screen: only the painted banner is shown.
 			hide(state.chatInput)
 			hide(state.chatSend)

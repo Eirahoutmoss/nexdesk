@@ -293,6 +293,8 @@ func stopSession() {
 	state.peer = nil
 	state.ctx = nil
 	state.mu.Unlock()
+	codeSessionActive.Store(false)
+	kickAllForStop() // device-link technicians would otherwise come back
 	techDropAll(nil) // target: every technician's peer and stream
 
 	if cancel != nil {

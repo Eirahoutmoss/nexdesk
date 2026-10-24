@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -88,6 +89,7 @@ func clearChildren() {
 }
 
 func home() {
+	codeSessionActive.Store(false)
 	clearChildren()
 	state.mode = 0
 	setStatus("Bir işlem seç.")
@@ -144,7 +146,13 @@ func giveMode() {
 	setStatus("Kodu girin — ya da kayıtlı bir cihaza bağlanmak için cihaz kimliği + parolasını girin.")
 }
 
+// codeSessionActive: a "Destek Al" code session is open on this machine.
+// It can run alongside device access; the UI shows the code, not the device
+// banner, while it is set.
+var codeSessionActive atomic.Bool
+
 func startTarget() {
+	codeSessionActive.Store(true)
 	userStopped.Store(false)
 	everConnected.Store(false)
 	reconnecting.Store(false)
@@ -243,6 +251,12 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) (lost bool) {
 // the server's keepalive pings are answered while a dialog is open.
 func targetLoopMode(ctx context.Context, c *clientsignaling.Client, device bool) (lost bool) {
 	defer logCrash("targetLoop")
+	// The security code is salted with what the technician typed: the
+	// device id for device sessions, the session code otherwise.
+	sasKey := getActiveCode()
+	if device {
+		sasKey = effectiveDeviceID()
+	}
 	defer func() {
 		if !lost || techCount() == 0 {
 			techDropAll(c)
@@ -270,6 +284,7 @@ func targetLoopMode(ctx context.Context, c *clientsignaling.Client, device bool)
 		switch msg.Type {
 		case "peer_joined":
 			t := techAdd(c, msg.Peer, msg.Name, msg.From)
+			t.sasKey = sasKey
 			messageBeep.Call(0x00000040) // MB_ICONASTERISK
 			if state.hwnd != 0 {
 				flashWindow.Call(state.hwnd, 1)
@@ -585,7 +600,7 @@ func watchPeer(peer *webrtcpeer.Peer) {
 			}
 			showConnectedView()
 			setConnInfo(peer.PathKind(), "")
-			if v, ok := peer.FingerprintSAS(getActiveCode()); ok {
+			if v, ok := peer.FingerprintSAS(sasKeyFor(peer)); ok {
 				setConnInfo("", v)
 			}
 			if state.mode != 1 || sessionStartUnix.Load() == 0 {

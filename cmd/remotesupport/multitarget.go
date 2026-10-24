@@ -40,6 +40,8 @@ type techConn struct {
 	ip    string
 	since time.Time
 	sig   *clientsignaling.Client
+	// sasKey salts the security code (device id or session code).
+	sasKey string
 
 	// guarded by techMu
 	peer      *webrtcpeer.Peer
@@ -84,6 +86,30 @@ func techGet(c *clientsignaling.Client, id string) *techConn {
 	techMu.Lock()
 	defer techMu.Unlock()
 	return techs[techKey(c, id)]
+}
+
+// sasKeyFor is the security-code salt for a peer: on the target the value
+// the technician used to connect, on the operator the active code.
+func sasKeyFor(p *webrtcpeer.Peer) string {
+	if state.mode == 1 {
+		if t := techOwns(p); t != nil && t.sasKey != "" {
+			return t.sasKey
+		}
+	}
+	return getActiveCode()
+}
+
+// kickAllForStop is used by "Bağlantıyı Kes": every technician is removed
+// on the server too, otherwise their apps would reconnect through a device
+// link that stays online.
+func kickAllForStop() {
+	for _, t := range techSnapshot() {
+		if t.sig != nil && t.sig.Multi() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = t.sig.Kick(ctx, t.id)
+			cancel()
+		}
+	}
 }
 
 // techSnapshot returns technicians ordered by join time.
