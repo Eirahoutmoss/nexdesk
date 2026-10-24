@@ -26,6 +26,7 @@ type rec struct {
 	frames    chan *Frame
 	closed    chan string
 	roster    chan string
+	saved     string
 }
 
 func newRec() *rec {
@@ -39,6 +40,11 @@ func (r *rec) OnInputBy(string)           {}
 func (r *rec) OnChat(string)              {}
 func (r *rec) OnMonitors(int)             {}
 func (r *rec) OnClosed(reason string)     { r.closed <- reason }
+func (r *rec) OnDeviceSaved(id, pass string) {
+	r.mu.Lock()
+	r.saved = id + "|" + pass
+	r.mu.Unlock()
+}
 
 // The mobile core joins a code like the desktop operator, receives a delta
 // frame with tile metadata, and its text input reaches the target intact.
@@ -81,6 +87,10 @@ func TestMobileSessionEndToEnd(t *testing.T) {
 				})
 				tp = p
 				p.SetControlHandler(func(m string) {
+					if strings.HasPrefix(m, "REGDEV_REQ:") {
+						_ = p.SendControlText("REGDEV_OK:PC-7|gizli123")
+						return
+					}
 					var ev protocol.InputEvent
 					if len(m) > 6 && m[:6] == "INPUT:" && json.Unmarshal([]byte(m[6:]), &ev) == nil {
 						inputs <- ev
@@ -136,10 +146,22 @@ func TestMobileSessionEndToEnd(t *testing.T) {
 			if ev.T != "text" || ev.S != "İğ ş\n" {
 				t.Fatalf("input %+v", ev)
 			}
-			if tp != nil {
-				tp.Close()
+			if !ms.RequestSaveDevice() {
+				t.Fatal("save request not sent")
 			}
-			return
+			for i := 0; i < 50; i++ {
+				r.mu.Lock()
+				got := r.saved
+				r.mu.Unlock()
+				if got == "PC-7|gizli123" {
+					if tp != nil {
+						tp.Close()
+					}
+					return
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			t.Fatal("device not saved")
 		case <-time.After(100 * time.Millisecond):
 		}
 	}

@@ -4,7 +4,7 @@
 // frames with 64x64 delta tiles, INPUT:{json} control messages.
 'use strict';
 
-const VER = '1.5.0';
+const VER = '1.5.1';
 const $ = (s) => document.querySelector(s);
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -176,8 +176,14 @@ function needName() {
 
 // ------------------------------------------------------------------ session
 function status(t) { $('#ovText').textContent = t; S.status = t; updateLine(); }
+// flash shows a message in the session's status line for a few seconds,
+// ahead of the roster / "Kontrol" line.
+function flash(t) {
+  S.flash = t; updateLine();
+  clearTimeout(S.flashT); S.flashT = setTimeout(() => { S.flash = ''; updateLine(); }, 6000);
+}
 function updateLine() {
-  const l = S.inputBy ? 'Kontrol: ' + S.inputBy : S.roster ? 'Oturumda: ' + S.roster : (S.status || '');
+  const l = S.flash ? S.flash : S.inputBy ? 'Kontrol: ' + S.inputBy : S.roster ? 'Oturumda: ' + S.roster : (S.status || '');
   $('#sLine').textContent = l;
 }
 
@@ -370,6 +376,12 @@ function onControl(raw) {
   } else if (raw.startsWith('MONITORS:')) {
     try { S.monitors = JSON.parse(raw.slice(9)).length; } catch { S.monitors = 0; }
     show($('#tMon'), S.monitors > 1); updateMon();
+  } else if (raw.startsWith('REGDEV_OK:')) {
+    const i = raw.indexOf('|');
+    const id = raw.slice(10, i).trim(), pass = raw.slice(i + 1);
+    if (i > 10 && id && pass) deviceSaved(id, pass);
+  } else if (raw === 'REGDEV_NO') {
+    flash('Karşı taraf kalıcı kaydı onaylamadı.');
   } else if (raw === 'PING') {
     sendCtl('PONG');
   } else if (raw.startsWith('SECURE_DESKTOP:')) {
@@ -757,7 +769,9 @@ async function openInfo() {
   let open = true;
   const sas = await sasCode();
   const body = () => `<div id="infoLines"></div>${sas ? `<div>Güvenlik kodu</div><div class="sas">${sas}</div><p class="muted small">Karşı taraftaki NexDesk ekranında da aynı kod görünmeli. Farklıysa bağlantıyı kesin.</p>` : ''}`;
-  const p = dialog('Bağlantı bilgisi', body(), [['Kapat', null]]);
+  const btns = [['Kapat', null]];
+  if (!S.device) btns.unshift(['Bu bilgisayarı kaydet', 'save']);
+  const p = dialog('Bağlantı bilgisi', body(), btns);
   const tick = async () => {
     if (!open) return;
     const el = $('#infoLines');
@@ -765,7 +779,27 @@ async function openInfo() {
     setTimeout(tick, 1000);
   };
   tick();
-  await p; open = false;
+  const v = await p; open = false;
+  if (v === 'save') {
+    if (sendCtl('REGDEV_REQ:' + (store.get('name', '') || 'Web') + ' (Tarayıcı)')) flash('Karşı taraftan kalıcı kayıt izni isteniyor — onayı bekleyin…');
+    else flash('İstek gönderilemedi — bağlantı hazır değil.');
+  }
+}
+
+// "Save this computer": the remote user approved; keep id + password
+// encrypted so the next connection needs no code.
+async function deviceSaved(id, pass) {
+  const devs = store.get('devices', []);
+  const old = devs.find((x) => x.id.toLowerCase() === id.toLowerCase());
+  let sealed;
+  try { sealed = await seal(pass); } catch { flash('Bu tarayıcı parolayı güvenli saklayamıyor; kayıt yapılamadı.'); return; }
+  const list = devs.filter((x) => x !== old);
+  list.push({ id, label: old ? old.label : '', pass: sealed });
+  list.sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id, 'tr'));
+  store.set('devices', list);
+  S.device = id;
+  renderDevices();
+  flash(`${id} kayıtlı cihazlara eklendi — bir dahaki sefere kod gerekmez.`);
 }
 
 // ------------------------------------------------------------------ wiring

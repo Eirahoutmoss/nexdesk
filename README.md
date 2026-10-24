@@ -46,7 +46,7 @@ Sık destek verdiğiniz bilgisayarlar için ise **rızaya dayalı gözetimsiz er
 | 📱 **Android teknisyen uygulaması** | Telefondan destek verin: dokunmatik kontrol, Türkçe karakterli yazım, özel tuşlar, monitör seçimi, kayıtlı cihazlar. |
 | 🌐 **Tarayıcı / iPhone uygulaması** | Kurulum yok: sunucunuzun adresini Safari'de açın, "Ana Ekrana Ekle" — iPhone, Android ve bilgisayar tarayıcısından destek verin. |
 | 📷 **Karekodla bağlanma** | Telefonla masaüstündeki karekodu okutun ya da `nexdesk://` linkine dokunun — kod yazmadan bağlanın. |
-| 🖥️ **Cihaz erişimi (gözetimsiz)** | Rızaya dayalı: karşı taraf bir kez onaylar, sonra teknisyen **kimlik + parola** ile kod sormadan bağlanır. Her zaman kapatılabilir. |
+| 🖥️ **Bilgisayar kaydetme** | Oturum açıkken tek dokunuşla — Windows, Android ve iPhone'dan. Kullanıcı bir kez onaylar, sonra **kimlik + parola** ile kod sormadan bağlanılır. Her zaman kapatılabilir. |
 | 🪟 **Çoklu oturum** | Tek `.exe` ile aynı anda birden fazla bağlantı; her pencere başlığında ilgili oturum kodu. |
 | 🛰️ **Her ağdan bağlantı** | Kendi TURN + signaling sunucunuzla (ör. Oracle Cloud ücretsiz katman) 10 haneli kod dünyanın her yerinden çalışır. |
 | 🌍 **Sunucusuz yedek yollar** | İnternet kodu (UPnP) ya da 97 karakterlik davet kodu. |
@@ -73,6 +73,16 @@ Sık destek verdiğiniz bilgisayarlar için ise **rızaya dayalı gözetimsiz er
 | 🔎 **Yüksek-DPI** | %125/150 ölçeklemeli ekranlarda keskin arayüz (GDI ölçekleme). |
 | 🏷️ **Beyaz etiket** | İsim, slogan, renk ve logoyu kendi markanıza göre değiştirin. |
 | 🪶 **Tek dosya** | Kurulum yok. `NexDesk.exe` çalıştır, hazır. Signaling gömülü. |
+
+### 🧭 Hangi uygulama ne yapar?
+
+| | Destek **alma** | Destek **verme** | Kurulum | Güncelleme |
+|---|:---:|:---:|---|---|
+| **Windows** (`NexDesk.exe`) | ✔ | ✔ | Tek dosya, kurulum yok | Kendiliğinden (imzalı) |
+| **Android** (`NexDesk.apk`) | — | ✔ | APK bir kez elle | Kendiliğinden (imzalı, bir dokunuş onay) |
+| **Tarayıcı / iPhone** (`https://<sunucu>/`) | — | ✔ | Yok — Safari'de "Ana Ekrana Ekle" | Sunucuyla birlikte |
+
+Hepsi aynı oturuma birlikte katılabilir: bir teknisyen masadan, biri telefondan, biri iPhone'dan.
 
 ---
 
@@ -166,7 +176,7 @@ Telefondan destek verin — nöbette, sahada, masadan uzaktayken.
 - **Bağlanma:** destek kodu, **karekod okutma** (Google'ın sistem tarayıcısı; uygulama kamera izni istemez), `nexdesk://join…` linkleri ya da **kayıtlı cihazlar** (parolalar Android Keystore ile şifreli saklanır).
 - **Dokunmatik kontrol:** dokun = tık · iki kez dokun = çift tık · uzun bas = sağ tık · sürükle = fareyle sürükleme · iki parmak = yakınlaştır/kaydır.
 - **Klavye:** telefon klavyesiyle yazılanlar Unicode olarak gönderilir — Türkçe karakterler karşı tarafın klavye düzeninden bağımsız doğru çıkar. Özel tuşlar: Esc, Tab, Win, oklar, Ctrl+C/V/Z/A, Alt+Tab, F5, Ctrl+Alt+Del, kaydırma.
-- **Oturum:** monitör seçimi, sohbet, "Oturumda: …" / "Kontrol: …" göstergeleri, **bağlantı bilgisi** (doğrudan/aktarmalı yol, gecikme, kare ve veri hızı, güvenlik kodu). Ağ değişince kendiliğinden yeniden bağlanır.
+- **Oturum:** monitör seçimi, sohbet, "Oturumda: …" / "Kontrol: …" göstergeleri, **bağlantı bilgisi** (doğrudan/aktarmalı yol, gecikme, kare ve veri hızı, güvenlik kodu) ve **Bu bilgisayarı kaydet**. Ağ değişince kendiliğinden yeniden bağlanır.
 - **Güncelleme:** yeni sürüm bulunur, indirilir, imzası doğrulanır; Android'in kurulum onayına tek dokunuş kalır.
 
 Uygulama, Windows sürümüyle aynı Go çekirdeğini (`client/`, `shared/`, `mobile/`) gomobile ile kullanır; arayüz Kotlin/Jetpack Compose'dur (`android/`).
@@ -180,7 +190,7 @@ Mac, App Store ya da kurulum gerekmeden **iPhone'dan** (ve her tarayıcıdan) de
 - **iPhone:** Safari'de adresi açın → Paylaş → **Ana Ekrana Ekle**. Tam ekran, simgeli bir uygulama gibi açılır.
 - **Bilgisayar tarayıcısı:** Fare, tekerlek ve gerçek klavye desteklenir; yazılanlar karakter olarak gider (Türkçe karakterler düzenden bağımsız), kısayollar (Ctrl+C…) tuş olarak.
 - **Telefon:** Android uygulamasıyla aynı dokunmatik hareketler, telefon klavyesi, özel tuşlar, monitör seçimi, sohbet, bağlantı bilgisi ve güvenlik kodu; birden fazla teknisyenli oturumlara katılır.
-- **Kayıtlı cihazlar:** Parolalar tarayıcıda, dışarı çıkarılamayan bir anahtarla şifreli saklanır.
+- **Kayıtlı cihazlar:** Oturum açıkken **ⓘ → Bu bilgisayarı kaydet** ya da ana ekranda ＋. Parolalar tarayıcıda, dışarı çıkarılamayan bir anahtarla şifreli saklanır.
 - **Güncelleme:** Sunucudaki program güncellenince uygulama da güncellenir; ayrıca dağıtım gerekmez.
 - `https://<sunucu>/#code=1234567890` biçimindeki linkler doğrudan o oturuma bağlar.
 
@@ -188,25 +198,40 @@ Mac, App Store ya da kurulum gerekmeden **iPhone'dan** (ve her tarayıcıdan) de
 
 ---
 
-## 🖥️ Cihaz erişimi (gözetimsiz bağlantı)
+## 🖥️ Bilgisayar kaydetme (cihaz erişimi)
 
-Sık destek verdiğiniz bilgisayarlar için her seferinde "kod oluştur / izin ver" döngüsü yerine **kimlik + parola ile doğrudan** bağlanabilirsiniz. Tamamen **rızaya dayalıdır** — karşı taraf açıkça açar ve istediğinde kapatır; gizli/sessiz erişim yoktur.
+Sık destek verdiğiniz bilgisayarları bir kez kaydedin; sonraki bağlantılarda kod istemeden **kimlik + parola** ile bağlanın. Tamamen **rızaya dayalıdır** — bilgisayarın kullanıcısı açıkça onaylar ve istediğinde kapatır; gizli/sessiz erişim yoktur.
 
-### Karşı tarafta (bir kez kurulum)
-**Sol menü → Cihaz Erişimi** → bir **cihaz kimliği** (varsayılan: bilgisayar adı) ve **parola** (en az 4 karakter) belirleyin → **Kaydet ve Etkinleştir**. Bilgisayar arka planda sunucuya kayıtlı kalır; ekranı normal şekilde kullanılmaya devam eder.
+### En kolay yol: oturum açıkken kaydet (her platformda)
+Kodla bağlıyken kaydetme isteği gönderin. Karşı tarafta bir **onay kutusu** çıkar; kullanıcı kabul ederse o bilgisayarda cihaz erişimi kendiliğinden açılır ve kimlik + parola şifreli bağlantı üzerinden **sizin kayıtlı cihazlarınıza** eklenir.
 
-### Teknisyen tarafında
-**Destek Ver** → **Kayıtlı Cihaz** listesinden seçin (kimlik ve parola otomatik dolar) ya da elle girin → **Bağlan**. Karşı taraf cihaz erişimini açtıysa onay beklemeden bağlanırsınız; o anda başka teknisyenler de bağlı olabilir. Telefondan da aynı kimlik + parolayla bağlanılır.
+| Teknisyen uygulaması | Nerede? |
+|---|---|
+| **Windows** | **İşlemler ▾ → Bu Cihazı Kalıcı Kaydet** |
+| **Android** | Üst çubukta **ⓘ (Bağlantı bilgisi) → Bu bilgisayarı kaydet** |
+| **Tarayıcı / iPhone** | Üst çubukta **ⓘ → Bu bilgisayarı kaydet** |
 
-- **Kayıtlı Cihaz listesi:** Bir cihaza ilk bağlanışınızda kimlik + parola otomatik kaydedilir; sonraki sefer listeden tek tıkla seçersiniz. **Yönet ▾** ile kayıtlı cihazları **yeniden adlandırabilir / silebilirsiniz**. Liste yalnızca bu bilgisayarda (`tech-devices.json`) tutulur.
+### Elle kurulum
+1. **Destek alınacak bilgisayarda (Windows):** Sol menü → **Cihaz Erişimi** → **cihaz kimliği** (varsayılan: bilgisayar adı) ve **parola** (en az 4 karakter) → **Kaydet ve Etkinleştir**. Bilgisayar arka planda sunucuya kayıtlı kalır, normal kullanılmaya devam eder.
+2. **Teknisyen tarafında:**
+   - **Windows:** **Destek Ver** → kimlik + parola → **Bağlan**. İlk bağlantıda cihaz **Kayıtlı Cihaz** listesine kendiliğinden eklenir; **Yönet ▾** ile yeniden adlandırılır / silinir.
+   - **Android ve tarayıcı / iPhone:** Ana ekran → **Kayıtlı cihazlar → ＋** → kimlik, ad, parola.
 
-### Aktif oturumu kalıcı erişime yükseltme
-Zaten onaylı (kodla kurulmuş) bir oturumdayken **İşlemler ▾ → "Bu Cihazı Kalıcı Kaydet"** diyebilirsiniz. Karşı tarafa bir **onay kutusu** çıkar; kabul ederse cihaz erişimi o bilgisayarda otomatik açılır, kimlik + parola iki tarafta da saklanır ve bundan sonra doğrudan bağlanırsınız.
+Kayıtlı cihaza bağlanırken onay sorulmaz (parola yeterlidir); bağlanan her teknisyen bilgisayarda bildirilir ve denetim kaydına yazılır. Aynı anda başka teknisyenler de bağlı olabilir.
+
+### Parolalar nerede tutulur?
+| Yer | Nasıl? |
+|---|---|
+| Sunucu | Düz değil: rastgele tuz + SHA-256 özeti, sabit-zamanlı karşılaştırma. |
+| Windows teknisyen | `%APPDATA%\RemoteSupport\tech-devices.json` (yalnızca bu bilgisayarda). |
+| Android | Android Keystore anahtarıyla AES-GCM şifreli (anahtar telefonun güvenli donanımından çıkmaz). |
+| Tarayıcı / iPhone | Tarayıcıda, dışarı çıkarılamayan (non-extractable) AES-GCM anahtarıyla şifreli. |
+
+> Kayıtlı cihaz listesi her uygulamada ayrıdır; Windows'ta kaydettiğiniz bilgisayar telefona kendiliğinden gelmez (telefondan da bir kez kaydedin ya da ＋ ile ekleyin).
 
 ### Güvenlik
-- Parolalar sunucuda **düz tutulmaz**; yalnızca rastgele tuz + SHA-256 özeti saklanır ve sabit-zamanlı karşılaştırmayla doğrulanır.
 - Kalıcı erişim **tek seferlik açık bir onay** ister; SYSTEM servisi, UAC/güvenli-masaüstü ele geçirme gibi "casus yazılım" yöntemleri **yoktur**.
-- Karşı taraf **Cihaz Erişimi → Kapalı → Kaydet** ile istediği an kapatır; bağlı teknisyenleri **Teknisyenler ▾** menüsünden tek tek de çıkarabilir.
+- Kullanıcı **Cihaz Erişimi → Kapalı → Kaydet** ile istediği an kapatır; bağlı teknisyenleri **Teknisyenler ▾** menüsünden tek tek de çıkarabilir.
 - Bir Windows oturumunda cihazı yalnızca **tek NexDesk penceresi** duyurur; ikinci pencere teknisyen modunda açılır (iki pencere sunucuda birbirini düşürmez).
 
 ---
@@ -283,7 +308,7 @@ go build -trimpath -ldflags='-s -w' -o sunucu\nexdesk-signaling ./cmd/signaling
   Ayarlar sayfasındaki alanlar boş kaldıkça gömülü sunucu kullanılır; kullanıcı kendi değerini girerse o geçerlidir. Gömülü sunucuya ulaşılamazsa NexDesk yerel ağ signaling'ine döner. Depoda yalnızca boş şablon `server-defaults.json` bulunur.
 - **Elle:** Ayarlar → *İnternet Signaling* alanına aynı `wss://…#pin=…` adreslerini girin, TURN alanlarını boş bırakın. Birden fazla adres virgülle girilebilir; ulaşılabilen ilki kullanılır.
 
-### Güvenlik modeli (1.2.0)
+### Güvenlik modeli
 - **Şifreli signaling:** Sunucu ilk açılışta öz-imzalı bir sertifika üretir. Adresin sonundaki `#pin=…` sertifikanın açık anahtar özetidir; NexDesk yalnızca bu anahtarı sunan sunucuyla konuşur, arada biri varsa *"Sunucu kimliği doğrulanamadı"* der ve bağlanmaz. Pin ağa gönderilmez. Alan adınız ve gerçek bir sertifikanız varsa (`REMOTESUPPORT_TLS_CERT/_KEY`), pinsiz `wss://alanadi/v1/ws` de olur.
 - **Exe'de parola yok:** TURN parolası artık exe'ye gömülmez. coturn ortak bir sırla (`use-auth-secret`) çalışır; signaling sunucusu her **onaylanmış** oturuma 12 saat geçerli ayrı bir TURN kimliği verir.
 - **Cihaz parolaları:** Gözetimsiz cihaz parolaları sunucuda yalnızca tuz + SHA-256 özeti olarak tutulur.
@@ -296,14 +321,9 @@ go build -trimpath -ldflags='-s -w' -o sunucu\nexdesk-signaling ./cmd/signaling
 Sunucuda sürüm bildirimi için (isteğe bağlı):
 ```bash
 # /etc/nexdesk/signaling.env
-REMOTESUPPORT_LATEST_APP=1.4.1   # istemcilere "en son sürüm" olarak bildirilir
+REMOTESUPPORT_LATEST_APP=1.5.1   # istemcilere "en son sürüm" olarak bildirilir
 REMOTESUPPORT_MIN_APP=           # bundan eski istemcilere "güncelle" uyarısı (boş=kapalı)
 ```
-
-### 1.1.x'ten 1.2.0'a geçiş
-1. Yeni `nexdesk-signaling` ile betiği sunucuda yeniden çalıştırın. Şifresiz 8091 açık kalır, eski istemciler signaling için çalışmaya devam eder; **ancak eski TURN parolası geçersizleşir**, eski sürümler yalnızca doğrudan bağlantı kurabilir. Öz-imzalı sertifika korunur (pin değişmez).
-2. Betiğin yazdığı `wss://…#pin=…` değerleriyle `server-defaults.local.json` dosyasını güncelleyin (TURN alanları boş), derleyip 1.2.0'ı tüm bilgisayarlara dağıtın.
-3. Herkes 1.2.0'a geçince betiği `KEEP_PLAIN=0 MIN_CLIENT_V=2` ile yeniden çalıştırıp 8091'i kapatın.
 
 ---
 
@@ -332,7 +352,7 @@ REMOTESUPPORT_MIN_APP=           # bundan eski istemcilere "güncelle" uyarısı
 | **Makrolar** | Kaydet → adlandır → listeden tek tıkla oynat. |
 | **Ekranımı Karşı Tarafa Göster** | Sizin ekranınız karşıda ayrı pencerede, yalnızca izleme. |
 | **Oturumu Devret** | Karşı taraf onaylarsa yeni kod üretilir; yeni teknisyen bağlanınca sizin oturumunuz kapanır. |
-| **Bu Cihazı Kalıcı Kaydet** | Karşı taraf onaylarsa gözetimsiz erişim açılır; sonraki bağlantılarda kod/onay gerekmez. |
+| **Bu Cihazı Kalıcı Kaydet** | Karşı taraf onaylarsa gözetimsiz erişim açılır; sonraki bağlantılarda kod/onay gerekmez (Android ve tarayıcıda: ⓘ → Bu bilgisayarı kaydet). |
 | **Bu Bilgisayara Not Ekle** | Not geçmişi, aynı bilgisayara bir sonraki bağlantıda otomatik gösterilir. |
 | **Bağlantı Günlüğü** | Kopmalar, yeniden bağlanmalar, kalite değişimleri, SAS olayları. |
 | **Gizlilik Perdesi / Giriş Kilidi** | Karşı ekranı karart / yerel girişi kilitle. |

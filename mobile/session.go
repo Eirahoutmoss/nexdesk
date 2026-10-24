@@ -89,6 +89,9 @@ type Listener interface {
 	OnChat(text string)
 	OnMonitors(count int)
 	OnClosed(reason string)
+	// OnDeviceSaved delivers the device id + password after the remote user
+	// approved "save this computer"; the app stores them encrypted.
+	OnDeviceSaved(id, pass string)
 }
 
 // Session is one connection to one remote computer.
@@ -485,6 +488,14 @@ func (s *Session) onControl(raw string) {
 		if json.Unmarshal([]byte(strings.TrimPrefix(raw, "MONITORS:")), &m) == nil {
 			s.l.OnMonitors(len(m))
 		}
+	case strings.HasPrefix(raw, "REGDEV_OK:"):
+		id, pass, _ := strings.Cut(strings.TrimPrefix(raw, "REGDEV_OK:"), "|")
+		if id = strings.TrimSpace(id); id != "" && pass != "" {
+			s.l.OnDeviceSaved(id, pass)
+			s.l.OnStatus("Bilgisayar kaydedildi: " + id)
+		}
+	case raw == "REGDEV_NO":
+		s.l.OnStatus("Karşı taraf kalıcı kaydı onaylamadı.")
 	case raw == "PING":
 		if p := s.currentPeer(); p != nil {
 			_ = p.SendControlText("PONG")
@@ -547,6 +558,21 @@ func (s *Session) Text(text string) {
 		s.send(protocol.InputEvent{T: "text", S: string(r[:n])})
 		r = r[n:]
 	}
+}
+
+// RequestSaveDevice asks the remote user to allow permanent access
+// (id + password, no code next time). The answer arrives as OnDeviceSaved or
+// a status line. Returns false when the control channel is not ready.
+func (s *Session) RequestSaveDevice() bool {
+	p := s.currentPeer()
+	if p == nil {
+		return false
+	}
+	if p.SendControlText("REGDEV_REQ:"+s.helloName()) != nil {
+		return false
+	}
+	s.l.OnStatus("Karşı taraftan kalıcı kayıt izni isteniyor — onayı bekleyin…")
+	return true
 }
 
 // Chat sends a chat line to the remote user.
