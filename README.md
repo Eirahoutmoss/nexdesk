@@ -6,12 +6,13 @@
 
 ### Uzaktan destek, daha kolay.
 
-Windows için **açık, güvenli ve tamamen kullanıcı onaylı** uzak masaüstü destek uygulaması.
+Windows ve Android için **açık, güvenli ve tamamen kullanıcı onaylı** uzak masaüstü destek uygulaması.
 Ara sunucuya muhtaç değil, reklam yok, arka planda casusluk yok — sadece iki bilgisayar, bir kod ve uçtan uca şifreli bir bağlantı.
 
 <br/>
 
 ![Platform](https://img.shields.io/badge/platform-Windows-0A66C2?style=for-the-badge&logo=windows&logoColor=white)
+![Android](https://img.shields.io/badge/teknisyen-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=for-the-badge&logo=go&logoColor=white)
 ![WebRTC](https://img.shields.io/badge/WebRTC-P2P-333333?style=for-the-badge&logo=webrtc&logoColor=white)
 ![Lisans](https://img.shields.io/badge/lisans-MIT-26D07C?style=for-the-badge)
@@ -40,7 +41,10 @@ Sık destek verdiğiniz bilgisayarlar için ise **rızaya dayalı gözetimsiz er
 | | |
 |---|---|
 | 🔒 **Uçtan uca şifreli** | Görüntü, kontrol ve dosyalar WebRTC (DTLS) ile şifrelenir. |
-| ✅ **Her zaman onaylı** | Kimse sizin "İzin Ver" demeden ekranınıza bağlanamaz. |
+| ✅ **Her zaman onaylı** | Kodla gelen her teknisyen için ayrı "İzin Ver" sorulur; kayıtlı cihazda parola yeterlidir, bağlanan her teknisyen bildirilir ve kaydedilir. |
+| 👥 **Aynı cihaza birden fazla teknisyen** | Lisans, süre ya da kişi sınırı yok. Bağlıları listeleyin, tek tek ya da toplu bağlantı kesin; fare/klavyenin kimde olduğu herkese gösterilir. |
+| 📱 **Android teknisyen uygulaması** | Telefondan destek verin: dokunmatik kontrol, Türkçe karakterli yazım, özel tuşlar, monitör seçimi, kayıtlı cihazlar. |
+| 📷 **Karekodla bağlanma** | Telefonla masaüstündeki karekodu okutun ya da `nexdesk://` linkine dokunun — kod yazmadan bağlanın. |
 | 🖥️ **Cihaz erişimi (gözetimsiz)** | Rızaya dayalı: karşı taraf bir kez onaylar, sonra teknisyen **kimlik + parola** ile kod sormadan bağlanır. Her zaman kapatılabilir. |
 | 🪟 **Çoklu oturum** | Tek `.exe` ile aynı anda birden fazla bağlantı; her pencere başlığında ilgili oturum kodu. |
 | 🛰️ **Her ağdan bağlantı** | Kendi TURN + signaling sunucunuzla (ör. Oracle Cloud ücretsiz katman) 10 haneli kod dünyanın her yerinden çalışır. |
@@ -63,7 +67,7 @@ Sık destek verdiğiniz bilgisayarlar için ise **rızaya dayalı gözetimsiz er
 | 📁 **Dosya & pano** | Sürükle-bırak dosya, pano paylaşımı, 30 sn'de silinen güvenli pano. |
 | 🖊️ **Ekran işaretleme** | Uzak ekrana çizip yol gösterin (çizimler solar). |
 | 🕶️ **Gizlilik perdesi & giriş kilidi** | Karşı ekranı karartın, yerel klavye/fareyi geçici kilitleyin. |
-| 🔔 **Sürüm bildirimi** | Yeni sürüm çıkınca nazik uyarı; Hakkında'da **Güncellemeleri Kontrol Et**. |
+| 🔄 **İmzalı otomatik güncelleme** | Windows ve Android uygulamaları yeni sürümü GitHub'dan bulur; Ed25519 imzası doğrulanmadan hiçbir dosya kurulmaz. |
 | 🎨 **Tema seçimi** | Gece Mavisi · Sıcak · Aydınlık — Hakkında'dan anında, kaydedilir. |
 | 🔎 **Yüksek-DPI** | %125/150 ölçeklemeli ekranlarda keskin arayüz (GDI ölçekleme). |
 | 🏷️ **Beyaz etiket** | İsim, slogan, renk ve logoyu kendi markanıza göre değiştirin. |
@@ -74,17 +78,37 @@ Sık destek verdiğiniz bilgisayarlar için ise **rızaya dayalı gözetimsiz er
 ## 🚀 Hızlı başlangıç
 
 ### İndir & çalıştır
-`dist/NexDesk.exe` dosyasını çalıştırmanız yeterli. Kurulum, .NET, ek paket **yok**.
+[**Releases**](../../releases/latest) sayfasından indirin:
+
+| Dosya | Nedir? |
+|---|---|
+| `NexDesk.exe` | Windows uygulaması — kurulum, .NET, ek paket **yok**; çalıştırın, hazır. |
+| `NexDesk.apk` | Android teknisyen uygulaması — bir kez elle kurun (Android "bilinmeyen kaynak" izni ister). |
+| `*.sig` | Güncelleme imzaları; uygulamalar kendileri kullanır. |
+| `nexdesk-signaling` | Kendi sunucunuz için Linux signaling programı. |
+
+İlk kurulumdan sonra **her iki uygulama da güncellemeleri kendisi bulur** (Windows: açılışta ve 12 saatte bir; Android: açılışta ve 6 saatte bir).
 
 ### Kaynaktan derleme
-Go 1.26+ kurulu olmalı:
+Gerekenler: **Go 1.26+**; Android için ayrıca **Android Studio** (SDK + *NDK (Side by side)*) ve Java 17.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\build.ps1
+# Bir kez: güncelleme imza anahtarı (%USERPROFILE%\.nexdesk\update.key — YEDEKLEYİN)
+go run ./cmd/nd-sign keygen -pub shared/update/update-pubkey.txt
+
+# Sürüm: Windows exe + Linux sunucu + Android APK, hepsi imzalı
+powershell -ExecutionPolicy Bypass -File .\release.ps1          # -NoAndroid: APK olmadan
 ```
 
-Çıktı: `dist\NexDesk.exe` (konsol penceresi olmayan, tek parça GUI uygulaması, gömülü uygulama ikonu + DPI manifesti).
-`assets\nexdesk.ico` veya `assets\nexdesk.manifest` değişirse ikon/manifest kaynağı (`rsrc_windows_amd64.syso`) derleme sırasında otomatik yenilenir.
+| Betik | Ne yapar? |
+|---|---|
+| `build.ps1` | Yalnızca `dist\NexDesk.exe` (ikon gömülü, konsolsuz GUI). |
+| `build-apk.ps1` | gomobile ile Go çekirdeğini Android kütüphanesine çevirir, Gradle ile APK'yı derler ve imzalar. SDK/NDK/Java'yı kendisi bulur; ilk çalıştırmada Android imza deposunu oluşturur. |
+| `release.ps1` | İkisini + Linux sunucu programını derler, güncelleme imzalarını üretir, yüklenecek dosyaları listeler (`-Publish`: `gh` ile sürümü de oluşturur). |
+
+> 🔑 `%USERPROFILE%\.nexdesk\` içindeki `update.key`, `android-release.jks` ve `keystore.properties` dosyalarını **mutlaka yedekleyin**. Kaybolurlarsa kurulu uygulamalar sonraki sürümleri kabul etmez.
+
+Sürüm numarası tek yerdedir: `cmd/remotesupport/branding.go` → `appVersion` (Android sürümü de buradan okunur).
 
 ---
 
@@ -119,6 +143,35 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 ---
 
+## 👥 Aynı bilgisayara birden fazla teknisyen
+
+HBYS gibi sistemlerde birkaç destek personelinin aynı anda müdahale etmesi olağandır. NexDesk'te **lisans, süre ya da bağlantı sayısı sınırı yoktur** (sunucu yalnızca kötüye kullanıma karşı oturum başına 32 kişilik bir tavan tutar).
+
+- **Kodlu oturumda** kod, oturum sürdükçe geçerlidir; ikinci, üçüncü teknisyen aynı kodla katılır, kullanıcı her biri için ayrıca onay verir.
+- **Kayıtlı cihazda** parola yeterlidir; bağlanan her teknisyen ekranda bildirilir ve denetim kaydına yazılır.
+- Destek alan tarafta **Teknisyenler (N) ▾** menüsü: ad, adres, bağlı kalma süresi, son müdahale — her satırda **Kes**, altta **Tümünün bağlantısını kes**.
+- Herkes kontrol edebilir; fare/klavye el değiştirdiğinde **"Kontrol: Ahmet"** herkese gösterilir, böylece iki kişi farkında olmadan aynı anda yazmaz.
+- Teknisyenler oturumda başka kimlerin olduğunu görür. Biri ayrılınca oturum diğerleri için sürer; kopan teknisyen geri bağlanabilir.
+- Her teknisyene ayrı şifreli bağlantı ve ayrı ekran akışı açılır (ekran bir kez yakalanır); her akışın kalitesi o teknisyenin hattına göre ayarlanır. Monitör seçimi ortaktır.
+
+> Bu özellik signaling sunucusunun 1.4.0+ olmasını gerektirir. Eski sunucu ya da eski destek alan uygulamayla bağlantılar eskisi gibi tek teknisyenle çalışır.
+
+---
+
+## 📱 Android teknisyen uygulaması
+
+Telefondan destek verin — nöbette, sahada, masadan uzaktayken.
+
+- **Bağlanma:** destek kodu, **karekod okutma** (Google'ın sistem tarayıcısı; uygulama kamera izni istemez), `nexdesk://join…` linkleri ya da **kayıtlı cihazlar** (parolalar Android Keystore ile şifreli saklanır).
+- **Dokunmatik kontrol:** dokun = tık · iki kez dokun = çift tık · uzun bas = sağ tık · sürükle = fareyle sürükleme · iki parmak = yakınlaştır/kaydır.
+- **Klavye:** telefon klavyesiyle yazılanlar Unicode olarak gönderilir — Türkçe karakterler karşı tarafın klavye düzeninden bağımsız doğru çıkar. Özel tuşlar: Esc, Tab, Win, oklar, Ctrl+C/V/Z/A, Alt+Tab, F5, Ctrl+Alt+Del, kaydırma.
+- **Oturum:** monitör seçimi, sohbet, "Oturumda: …" / "Kontrol: …" göstergeleri, **bağlantı bilgisi** (doğrudan/aktarmalı yol, gecikme, kare ve veri hızı, güvenlik kodu). Ağ değişince kendiliğinden yeniden bağlanır.
+- **Güncelleme:** yeni sürüm bulunur, indirilir, imzası doğrulanır; Android'in kurulum onayına tek dokunuş kalır.
+
+Uygulama, Windows sürümüyle aynı Go çekirdeğini (`client/`, `shared/`, `mobile/`) gomobile ile kullanır; arayüz Kotlin/Jetpack Compose'dur (`android/`).
+
+---
+
 ## 🖥️ Cihaz erişimi (gözetimsiz bağlantı)
 
 Sık destek verdiğiniz bilgisayarlar için her seferinde "kod oluştur / izin ver" döngüsü yerine **kimlik + parola ile doğrudan** bağlanabilirsiniz. Tamamen **rızaya dayalıdır** — karşı taraf açıkça açar ve istediğinde kapatır; gizli/sessiz erişim yoktur.
@@ -127,7 +180,7 @@ Sık destek verdiğiniz bilgisayarlar için her seferinde "kod oluştur / izin v
 **Sol menü → Cihaz Erişimi** → bir **cihaz kimliği** (varsayılan: bilgisayar adı) ve **parola** (en az 4 karakter) belirleyin → **Kaydet ve Etkinleştir**. Bilgisayar arka planda sunucuya kayıtlı kalır; ekranı normal şekilde kullanılmaya devam eder.
 
 ### Teknisyen tarafında
-**Destek Ver** → **Kayıtlı Cihaz** listesinden seçin (kimlik ve parola otomatik dolar) ya da elle girin → **Bağlan**. Karşı taraf cihaz erişimini açtıysa onay beklemeden bağlanırsınız.
+**Destek Ver** → **Kayıtlı Cihaz** listesinden seçin (kimlik ve parola otomatik dolar) ya da elle girin → **Bağlan**. Karşı taraf cihaz erişimini açtıysa onay beklemeden bağlanırsınız; o anda başka teknisyenler de bağlı olabilir. Telefondan da aynı kimlik + parolayla bağlanılır.
 
 - **Kayıtlı Cihaz listesi:** Bir cihaza ilk bağlanışınızda kimlik + parola otomatik kaydedilir; sonraki sefer listeden tek tıkla seçersiniz. **Yönet ▾** ile kayıtlı cihazları **yeniden adlandırabilir / silebilirsiniz**. Liste yalnızca bu bilgisayarda (`tech-devices.json`) tutulur.
 
@@ -137,7 +190,8 @@ Zaten onaylı (kodla kurulmuş) bir oturumdayken **İşlemler ▾ → "Bu Cihaz�
 ### Güvenlik
 - Parolalar sunucuda **düz tutulmaz**; yalnızca rastgele tuz + SHA-256 özeti saklanır ve sabit-zamanlı karşılaştırmayla doğrulanır.
 - Kalıcı erişim **tek seferlik açık bir onay** ister; SYSTEM servisi, UAC/güvenli-masaüstü ele geçirme gibi "casus yazılım" yöntemleri **yoktur**.
-- Karşı taraf **Cihaz Erişimi → Kapalı → Kaydet** ile istediği an kapatır.
+- Karşı taraf **Cihaz Erişimi → Kapalı → Kaydet** ile istediği an kapatır; bağlı teknisyenleri **Teknisyenler ▾** menüsünden tek tek de çıkarabilir.
+- Bir Windows oturumunda cihazı yalnızca **tek NexDesk penceresi** duyurur; ikinci pencere teknisyen modunda açılır (iki pencere sunucuda birbirini düşürmez).
 
 ---
 
@@ -220,11 +274,13 @@ go build -trimpath -ldflags='-s -w' -o sunucu\nexdesk-signaling ./cmd/signaling
 - **Onay penceresi:** Destek alan kişi, onay vermeden önce bağlananın bilgisayar/kullanıcı adını ve IP adresini görür. Ad karşı tarafın beyanıdır; IP sunucunun gördüğü adrestir.
 - **Sürüm bildirimi:** Sunucu, bağlantıda "en son / en düşük istemci sürümü"nü bildirir. İstemci eskiyse Hakkında'da ve bağlantıda nazikçe uyarır. `MIN_CLIENT_V=2` ayarlanırsa eski (1.1.x) istemciler tamamen reddedilir.
 - **Kod üretme sınırı:** Aynı IP dakikada en fazla 20 kod üretebilir.
+- **Ölü bağlantı temizliği (1.4):** Sunucu 1.4+ istemcileri 30 sn'de bir yoklar; yanıt vermeyen bağlantı ~1 dk içinde düşürülür, böylece kopan bir teknisyen ya da uykuya geçen bir cihaz oturumu kilitlemez.
+- **İç TURN adresi (1.3):** `sunucu-kur.sh` artık yalnızca dış adresleri dağıtır; bulut sunucunun iç adresi dışarıdan ulaşılamaz ve bağlantıyı ~8 sn geciktirirdi. Sunucuyla aynı iç ağdaki istemciler için `TURN_LAN=1` ile eklenebilir.
 
 Sunucuda sürüm bildirimi için (isteğe bağlı):
 ```bash
 # /etc/nexdesk/signaling.env
-REMOTESUPPORT_LATEST_APP=1.2.0   # istemcilere "en son sürüm" olarak bildirilir
+REMOTESUPPORT_LATEST_APP=1.4.1   # istemcilere "en son sürüm" olarak bildirilir
 REMOTESUPPORT_MIN_APP=           # bundan eski istemcilere "güncelle" uyarısı (boş=kapalı)
 ```
 
@@ -281,7 +337,13 @@ Sol menüdeki **Bağlantılar** sayfası, oturum kurduğunuz her bilgisayarı ot
 ## 🎨 Görünüm & güncelleme (Hakkında)
 
 - **Tema:** **Hakkında** sayfasındaki açılır listeden **Gece Mavisi**, **Sıcak** (amber/espresso) veya **Aydınlık** temasını seçin. Değişiklik anında uygulanır ve kaydedilir.
-- **Güncellemeleri Kontrol Et:** Aynı sayfadaki düğme, sunucuya kısa bir el sıkışma yapıp en son sürümü kontrol eder ve sonucu renkli gösterir: 🟢 *Güncel* · 🟡 *Yeni sürüm mevcut* · 🟡 *Güncelleme gerekli*. Durum her normal bağlantıda da kendiliğinden tazelenir.
+- **Güncellemeleri Kontrol Et:** GitHub'daki son sürüme bakar; yeni sürüm varsa sorar, onaylanırsa indirir, imzasını doğrular, kendini değiştirip yeniden başlar. Oturum sürerken güncelleme yapılmaz. GitHub'a ulaşılamazsa sunucunun sürüm bildirimine bakar.
+
+### 🔄 Güncellemeler nasıl çalışır?
+1. `release.ps1` her dosya için `*.sig` üretir: Ed25519 imzası **dosya adı + sürüm + SHA-256** üzerine atılır (eski bir sürüm yeni diye sunulamaz).
+2. Dosyalar GitHub'da bir **Release** olarak yayımlanır (`v1.4.1` gibi; *pre-release* işaretlenmemeli).
+3. Uygulamalar `releases/latest`'i okur; imzayı uygulamaya gömülü genel anahtarla doğrulamadan hiçbir şey kurmaz. GitHub hesabı ele geçirilse bile imza anahtarı olmadan sahte güncelleme dağıtılamaz.
+4. Windows'ta çalışan exe `.old` olarak kenara alınır, yenisi yerine konur ve başlatılır; eski dosya açılışta silinir. Program klasörüne yazılamıyorsa indirme sayfası açılır.
 
 ---
 
@@ -368,44 +430,46 @@ Video kayıtları `Videolar\NexDesk\`, alınan dosyalar ve ekran görüntüleri 
 
 - **Signaling** yalnızca iki tarafı tanıştırır; oturum verisi taşımaz. `NexDesk.exe` içine gömülüdür ya da kendi sunucunuzda çalışır. Davet kodu yolunda hiç kullanılmaz.
 - **TURN** yalnızca doğrudan bağlantı kurulamadığında devreye girer ve şifreli trafiği olduğu gibi aktarır; içeriği göremez.
-- Kodlar **tek kullanımlık** ve **kısa ömürlüdür**; cihaz erişimi ise kalıcı kimlik + parola kullanır.
+- Kodlar onaylanana kadar **5 dakika** geçerlidir; oturum sürdükçe aynı kodla yeni teknisyenler katılabilir (her biri onaylanır). Cihaz erişimi kalıcı kimlik + parola kullanır.
 - Ekran yakalama GDI `BitBlt` (imleç dahil), arayüz ham Win32 (owner-draw, çift tamponlu çizim) — ağır UI çatısı yok.
 
 ### 📂 Proje yapısı
 
 ```
-RemoteSupport/
+NexDesk/
 ├─ cmd/
-│  ├─ remotesupport/            # GUI istemci (ana uygulama)
-│  │  ├─ app.go                 #   giriş noktası, pencere kurulumu
-│  │  ├─ main.go                #   sabitler, Win32 bağları
-│  │  ├─ session.go             #   oturum akışı (agent / operator)
-│  │  ├─ network.go             #   ekran yayını, gömülü signaling, LAN keşfi
-│  │  ├─ viewer.go              #   uzak ekran görüntüleyici
-│  │  ├─ remote_input.go        #   kontrol mesajları, girdi enjeksiyonu, dosya alma
-│  │  ├─ commands.go            #   menüler, komutlar, pencere yordamı
-│  │  ├─ paint.go · ui_*.go     #   arayüz çizimi, yerleşim, temalar
-│  │  ├─ deviceaccess.go · deviceui.go · techdevices.go · regdevice.go
-│  │  │                         #   gözetimsiz cihaz erişimi + kalıcı erişim
-│  │  ├─ multisession.go        #   "Yeni Oturum" penceresi
-│  │  ├─ version_notice.go · update_check.go  # sürüm bildirimi / kontrolü
-│  │  ├─ b1_*.go                #   onarım, SAS, pano, adres defteri, WoL, günlük
-│  │  ├─ b2_*.go                #   kalkan, devir, karşılıklı ekran, kayıt, makro
-│  │  ├─ b3_net.go              #   internet kodu + UPnP
-│  │  ├─ b3_manual.go · b3_compact.go  # sunucusuz davet kodu
-│  │  ├─ b3_defaults.go         #   gömülü sunucu ayarları (+ .local.json)
-│  │  ├─ b3_firewall.go · b3_diag.go   # güvenlik duvarı izni · bağlantı tanısı
-│  │  ├─ b4_tiles.go            #   karo/delta ekran kodlama
-│  │  ├─ qr.go                  #   bağımsız QR kod üretici
-│  │  └─ assets/                #   logo.png, nexdesk.ico, nexdesk.manifest
-│  ├─ signaling/                # tek başına signaling sunucusu (opsiyonel)
-│  ├─ nd-check/                 # bağlantı tanı aracı
-│  └─ capture-check/            # ekran yakalama testi
-├─ client/                      # capture · screen · signaling · webrtc
-├─ server/signaling/            # rendezvous/signaling sunucu mantığı (cihaz kaydı dahil)
-├─ shared/                      # protokol · LAN keşfi
+│  ├─ remotesupport/            # Windows uygulaması
+│  │  ├─ app.go · main.go       #   giriş noktası, Win32 bağları
+│  │  ├─ session.go             #   oturum akışı (destek alan / veren)
+│  │  ├─ multitarget.go         #   aynı cihaza çoklu teknisyen, Teknisyenler menüsü
+│  │  ├─ reconnect.go           #   otomatik yeniden bağlanma
+│  │  ├─ network.go             #   ekran yayını (teknisyen başına akış), gömülü signaling
+│  │  ├─ viewer.go · remote_input.go   # görüntüleyici · girdi enjeksiyonu (Unicode yazım dahil)
+│  │  ├─ updater.go · update_check.go  # imzalı otomatik güncelleme
+│  │  ├─ deviceaccess.go · techdevices.go · regdevice.go  # cihaz erişimi
+│  │  ├─ atomicfile.go          #   atomik dosya yazımı, cihaz rolü kilidi
+│  │  ├─ b1_* · b2_* · b3_* · b4_tiles.go  # araçlar, kalkan, devir, ağ, karo kodlama
+│  │  └─ assets/                #   logo, ikon, gömülü sunucu ayarı şablonu
+│  ├─ signaling/                # Linux signaling sunucusu
+│  ├─ nd-sign/                  # güncelleme imza anahtarı üretme / imzalama
+│  ├─ nd-check/ · capture-check/  # tanı araçları
+├─ client/                      # capture · screen · signaling · webrtc (platformdan bağımsız)
+├─ server/signaling/            # signaling mantığı (çoklu teknisyen, cihaz kaydı)
+├─ shared/
+│  ├─ protocol/                 #   girdi olayları
+│  ├─ tiles/                    #   karo/delta kare biçimi
+│  ├─ joinlink/                 #   kod · nexdesk:// link · internet kodu
+│  ├─ update/                   #   GitHub sürümü, indirme, Ed25519 doğrulama, genel anahtar
+│  └─ landisc/                  #   LAN keşfi
+├─ mobile/                      # Android Go çekirdeği (gomobile bind)
+├─ android/                     # Android uygulaması (Kotlin/Compose, Gradle)
+├─ integration/                 # uçtan uca testler (çoklu teknisyen dahil)
 ├─ sunucu/                      # sunucu-kur.sh (coturn + signaling kurulumu)
-└─ build.ps1                    # tek komutla derleme (ikon + manifest dahil)
+└─ build.ps1 · build-apk.ps1 · release.ps1
+```
+
+```powershell
+go test ./...        # sunucu, istemci, mobil çekirdek ve uçtan uca testler
 ```
 
 ---
