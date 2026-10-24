@@ -46,10 +46,7 @@ func saveTechDevices() {
 		return
 	}
 	if b, err := json.Marshal(techDevices); err == nil {
-		tmp := p + ".tmp"
-		if os.WriteFile(tmp, b, 0600) == nil {
-			_ = os.Rename(tmp, p)
-		}
+		_ = writeFileAtomic(p, b, 0600)
 	}
 }
 

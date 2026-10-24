@@ -10,7 +10,6 @@ import (
 	"time"
 
 	clientsignaling "github.com/eirahoutmoss/remotesupport/client/signaling"
-	"github.com/pion/webrtc/v4"
 )
 
 // deviceModeActive is set while this machine is serving technician access.
@@ -52,6 +51,13 @@ func startDeviceMode() {
 	pass := cfg.DevicePass
 	if id == "" || len(pass) < 4 {
 		netlogf("Cihaz erişimi açık ama kimlik/parola eksik — devre dışı")
+		return
+	}
+	// One NexDesk process per Windows session announces the device; a second
+	// window works as a technician window only.
+	if !acquireDeviceRole() {
+		netlogf("Cihaz erişimi başka bir NexDesk penceresinde etkin — bu pencere teknisyen modunda")
+		setStatus("● Cihaz erişimi başka bir NexDesk penceresinde zaten etkin; bu pencere yalnızca destek vermek için kullanılabilir.")
 		return
 	}
 	// One loop only. CAS fails if a loop is already active.
@@ -120,13 +126,14 @@ func deviceModeLoop(id, pass string, gen int64) {
 		// then re-register so the device stays reachable.
 		c.KeepAlive(ctx, signalingKeepAlive) // long idle waits behind NAT/proxies
 		start := time.Now()
-		lost := targetLoop(ctx, c)
+		lost := targetLoopMode(ctx, c, true)
 		_ = c.Close(context.Background())
 		if lost {
 			// Signaling dropped but media is peer-to-peer: cancelling ctx now
 			// would stop capture and kill a live session. Wait for it to end.
 			waitSessionEnd(gen)
 		}
+		techDropAll(c)
 		cancel()
 		if deviceModeGen.Load() != gen {
 			return
@@ -150,10 +157,7 @@ func deviceModeLoop(id, pass string, gen int64) {
 func waitSessionEnd(gen int64) {
 	logged := false
 	for deviceModeGen.Load() == gen {
-		state.mu.Lock()
-		p := state.peer
-		state.mu.Unlock()
-		if p == nil || !capturing.Load() || p.ConnectionState() == webrtc.PeerConnectionStateFailed || p.ConnectionState() == webrtc.PeerConnectionStateClosed {
+		if len(techPeers()) == 0 {
 			return
 		}
 		if !logged {
@@ -189,6 +193,7 @@ func stopDeviceMode() {
 	}
 	deviceModeGen.Add(1) // supersede the running loop
 	deviceModeActive.Store(false)
+	releaseDeviceRole()
 	state.mu.Lock()
 	c, cancel := state.sig, state.cancel
 	state.mu.Unlock()

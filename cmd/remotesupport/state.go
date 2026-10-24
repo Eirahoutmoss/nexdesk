@@ -125,6 +125,7 @@ type windowState struct {
 	settingsTurnPass   uintptr
 	stayOpen           uintptr
 	actionsBtn         uintptr
+	techsBtn           uintptr // target: connected technicians menu
 	shareLink          uintptr
 	header             uintptr
 	subtitle           uintptr
@@ -264,7 +265,7 @@ func saveSettings() {
 	cfg := appCfg
 	settingsMu.RUnlock()
 	b, _ := json.MarshalIndent(cfg, "", "  ")
-	_ = os.WriteFile(path, b, 0600)
+	_ = writeFileAtomic(path, b, 0600)
 }
 
 func currentSettings() appSettings { settingsMu.RLock(); defer settingsMu.RUnlock(); return appCfg }

@@ -45,7 +45,20 @@ const (
 //
 //	v2: version/feature negotiation, operator identity in peer_joined,
 //	    per-session TURN credentials ("turncred").
-const ProtocolVersion = 2
+//	v3: several operators per session ("multi"): target-bound messages carry
+//	    the operator's id in "peer"; peer_left/kick; server keepalive pings.
+const ProtocolVersion = 3
+
+// FeatureMulti means a v3 target may serve several operators at once.
+const FeatureMulti = "multi"
+
+// MaxOperators caps operators per session (abuse guard, not a licence limit).
+const MaxOperators = 32
+
+const (
+	pingInterval = 30 * time.Second
+	pingTimeout  = 15 * time.Second
+)
 
 // FeatureTURNCred means the server hands out short-lived TURN credentials
 // after approval: an "ice" message to the target, and ICE in "approved".
@@ -84,6 +97,10 @@ type Message struct {
 	// Device access (attended technician support by stable device id + password).
 	DeviceID string `json:"device_id,omitempty"` // create: register/announce; join: target device
 	Pass     string `json:"pass,omitempty"`      // device password (device create, operator join)
+
+	// v3: operator id on every target-bound/target-sent per-operator message
+	// (peer_joined, ice, signal, approve, peer_left, kick).
+	Peer string `json:"peer,omitempty"`
 }
 
 // ICECreds is a short-lived TURN credential in coturn "use-auth-secret"
@@ -131,16 +148,49 @@ type session struct {
 	code       string
 	createdAt  time.Time
 	target     *peer
-	operator   *peer
-	joined     bool
-	approved   bool
-	persistent bool // device session: never TTL-expires, re-created by the device
+	ops        map[string]*opPeer // operators by id
+	opOrder    []string           // join order (legacy single-operator lookups)
+	used       bool               // legacy: code consumed at first join
+	approved   bool               // at least one operator was approved
+	persistent bool               // device session: never TTL-expires, re-created by the device
+}
+
+// multi reports whether the target speaks v3 and can serve several operators.
+func (sess *session) multi() bool { return sess.target != nil && sess.target.v >= 3 }
+
+// op finds an operator: by id for v3 targets, the only one for legacy targets.
+func (sess *session) op(id string) *opPeer {
+	if o := sess.ops[id]; o != nil {
+		return o
+	}
+	if (!sess.multi() || id == "") && len(sess.opOrder) == 1 {
+		return sess.ops[sess.opOrder[0]] // legacy target, or a v3 target omitting the id with one operator
+	}
+	return nil
+}
+
+func (sess *session) removeOp(id string) *opPeer {
+	o := sess.ops[id]
+	delete(sess.ops, id)
+	for i, x := range sess.opOrder {
+		if x == id {
+			sess.opOrder = append(sess.opOrder[:i], sess.opOrder[i+1:]...)
+			break
+		}
+	}
+	return o
 }
 
 type peer struct {
 	conn *websocket.Conn
 	role Role
 	v    int
+}
+
+type opPeer struct {
+	peer
+	id       string
+	approved bool
 }
 
 type rateLimit struct {
@@ -234,10 +284,11 @@ func (s *Server) SetLogger(f func(format string, a ...any)) {
 }
 
 func (s *Server) features() []string {
+	f := []string{FeatureMulti}
 	if len(s.turnSecret) > 0 && len(s.turnURLs) > 0 {
-		return []string{FeatureTURNCred}
+		f = append(f, FeatureTURNCred)
 	}
-	return nil
+	return f
 }
 
 // turnCreds issues a credential; nil when TURN is not configured.
@@ -291,8 +342,8 @@ func (s *Server) Close() {
 		if sess.target != nil {
 			peers = append(peers, sess.target)
 		}
-		if sess.operator != nil {
-			peers = append(peers, sess.operator)
+		for _, o := range sess.ops {
+			peers = append(peers, &o.peer)
 		}
 	}
 	s.mu.Unlock()
@@ -326,6 +377,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ip := remoteIP(r.RemoteAddr)
+	if first.V >= 3 {
+		// v3 clients keep reading while dialogs are open, so a missing pong
+		// really means a dead link (sleeping laptop, NAT drop). Older
+		// clients block in the approval dialog and would be dropped falsely.
+		pctx, pcancel := context.WithCancel(r.Context())
+		defer pcancel()
+		go pingLoop(pctx, conn)
+	}
 	s.mu.Lock()
 	minV, logf := s.minClientV, s.logf
 	s.mu.Unlock()
@@ -394,9 +453,11 @@ func (s *Server) targetReadLoop(ctx context.Context, conn *websocket.Conn, code 
 		}
 		switch msg.Type {
 		case "approve":
-			s.handleApprove(conn, code, msg.Approved, msg.Reason)
+			s.handleApprove(conn, code, msg.Peer, msg.Approved, msg.Reason)
 		case "signal", "close":
-			s.forward(code, RoleTarget, msg)
+			s.forward(code, RoleTarget, "", msg)
+		case "kick":
+			s.kick(code, msg.Peer)
 		default:
 			_ = s.write(conn, Message{Type: "error", Reason: "invalid_target_message"})
 		}
@@ -524,74 +585,158 @@ func (s *Server) handleJoin(ctx context.Context, conn *websocket.Conn, code, ip 
 	s.mu.Lock()
 	sess := s.sessions[code]
 	now := time.Now()
-	if sess == nil || sess.target == nil || sess.operator != nil || sess.joined || now.Sub(sess.createdAt) > s.ttl {
-		logf := s.logf
+	logf := s.logf
+	reason := ""
+	switch {
+	case sess == nil || sess.target == nil:
+		reason = "invalid_or_expired_code"
+	case !sess.persistent && !sess.approved && len(sess.ops) == 0 && now.Sub(sess.createdAt) > s.ttl:
+		reason = "invalid_or_expired_code"
+	case !sess.multi() && (sess.used || len(sess.ops) > 0):
+		// Legacy target: one operator per session; a code is single-use.
+		if sess.persistent {
+			reason = "device_busy"
+		} else {
+			reason = "invalid_or_expired_code"
+		}
+	case len(sess.ops) >= MaxOperators:
+		reason = "session_full"
+	}
+	if reason != "" {
 		s.mu.Unlock()
-		s.recordJoinFailure(ip, now)
-		logf("geçersiz kod denemesi: ip=%s", ip)
-		_ = s.write(conn, Message{Type: "error", Reason: "invalid_or_expired_code"})
+		if reason == "invalid_or_expired_code" {
+			s.recordJoinFailure(ip, now)
+			logf("geçersiz kod denemesi: ip=%s", ip)
+		}
+		_ = s.write(conn, Message{Type: "error", Reason: reason})
 		return
 	}
-	sess.joined = true // code is consumed at the first successful join.
-	sess.operator = &peer{conn: conn, role: RoleOperator, v: first.V}
+	id := newPeerID()
+	o := &opPeer{peer: peer{conn: conn, role: RoleOperator, v: first.V}, id: id}
+	if sess.ops == nil {
+		sess.ops = map[string]*opPeer{}
+	}
+	sess.ops[id] = o
+	sess.opOrder = append(sess.opOrder, id)
+	sess.used = true
+	multi := sess.multi()
 	target := sess.target.conn
-	feats, logf := s.features(), s.logf
+	feats := s.features()
 	s.mu.Unlock()
 	name := CleanName(first.Name)
-	logf("koda katılındı: ip=%s v=%d app=%q ad=%q", ip, first.V, first.App, name)
+	logf("koda katılındı: ip=%s v=%d app=%q ad=%q teknisyen=%s", ip, first.V, first.App, name, id)
 
 	minApp, latestApp := s.appVers()
-	if err := s.write(conn, Message{Type: "joined", Code: code, Role: RoleOperator, V: ProtocolVersion, Features: feats, MinApp: minApp, LatestApp: latestApp}); err != nil {
-		s.removeOwned(code, conn)
+	if err := s.write(conn, Message{Type: "joined", Code: code, Role: RoleOperator, V: ProtocolVersion, Features: feats, MinApp: minApp, LatestApp: latestApp, Peer: id}); err != nil {
+		s.operatorGone(code, id, conn)
 		return
 	}
-	if err := s.write(target, Message{Type: "peer_joined", Code: code, Name: name, From: ip, V: first.V}); err != nil {
-		s.removeOwned(code, conn)
+	pj := Message{Type: "peer_joined", Code: code, Name: name, From: ip, V: first.V}
+	if multi {
+		pj.Peer = id
+	}
+	if err := s.write(target, pj); err != nil {
+		s.operatorGone(code, id, conn)
 		return
 	}
 
 	for {
 		var msg Message
 		if err := wsjson.Read(ctx, conn, &msg); err != nil {
-			s.removeOwned(code, conn)
+			s.operatorGone(code, id, conn)
 			return
 		}
 		switch msg.Type {
-		case "signal", "close":
-			s.forward(code, RoleOperator, msg)
+		case "signal":
+			s.forward(code, RoleOperator, id, msg)
+		case "close":
+			if multi {
+				s.operatorGone(code, id, conn) // v3: leaving ends only this operator
+				return
+			}
+			s.forward(code, RoleOperator, id, msg)
 		default:
 			_ = s.write(conn, Message{Type: "error", Reason: "invalid_operator_message"})
 		}
 	}
 }
 
-func (s *Server) handleApprove(conn *websocket.Conn, code string, ok bool, reason string) {
+// operatorGone removes one operator. For a v3 target the session lives on
+// and the target is told (peer_left); a legacy session ends as before.
+func (s *Server) operatorGone(code, id string, conn *websocket.Conn) {
 	s.mu.Lock()
 	sess := s.sessions[code]
-	if sess == nil || sess.target == nil || sess.operator == nil || !sess.joined {
+	if sess == nil || sess.ops[id] == nil || sess.ops[id].conn != conn {
+		s.mu.Unlock()
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+		return
+	}
+	if !sess.multi() {
+		s.mu.Unlock()
+		s.removeOwned(code, conn)
+		return
+	}
+	sess.removeOp(id)
+	target := sess.target.conn
+	s.mu.Unlock()
+	_ = conn.Close(websocket.StatusNormalClosure, "")
+	_ = s.write(target, Message{Type: "peer_left", Peer: id})
+	s.logf("teknisyen ayrıldı: %s teknisyen=%s", code, id)
+}
+
+// kick lets a v3 target drop one operator.
+func (s *Server) kick(code, id string) {
+	s.mu.Lock()
+	sess := s.sessions[code]
+	var o *opPeer
+	if sess != nil && sess.multi() {
+		o = sess.removeOp(id)
+	}
+	s.mu.Unlock()
+	if o == nil {
+		return
+	}
+	_ = s.write(o.conn, Message{Type: "closed", Reason: "kicked"})
+	go o.conn.Close(websocket.StatusNormalClosure, "kicked")
+	s.logf("teknisyen çıkarıldı: %s teknisyen=%s", code, id)
+}
+
+func (s *Server) handleApprove(conn *websocket.Conn, code, id string, ok bool, reason string) {
+	s.mu.Lock()
+	sess := s.sessions[code]
+	var o *opPeer
+	if sess != nil {
+		o = sess.op(id)
+	}
+	if o == nil {
 		s.mu.Unlock()
 		_ = s.write(conn, Message{Type: "error", Reason: "approval_not_available"})
 		return
 	}
-	if sess.approved {
-		target := sess.target.conn
+	if o.approved {
 		s.mu.Unlock()
-		_ = s.write(target, Message{Type: "error", Reason: "approval_already_decided"})
+		_ = s.write(conn, Message{Type: "error", Reason: "approval_already_decided"})
 		return
 	}
+	multi := sess.multi()
 	if !ok {
-		op := sess.operator.conn
 		target := sess.target.conn
-		delete(s.sessions, code)
+		if multi {
+			sess.removeOp(o.id)
+		} else {
+			delete(s.sessions, code)
+		}
 		s.mu.Unlock()
-		_ = s.write(op, Message{Type: "rejected", Reason: reason})
-		_ = op.Close(websocket.StatusPolicyViolation, "rejected")
-		_ = target.Close(websocket.StatusPolicyViolation, "rejected")
+		_ = s.write(o.conn, Message{Type: "rejected", Reason: reason})
+		go o.conn.Close(websocket.StatusPolicyViolation, "rejected") // never block the target's loop on a close handshake
+		if !multi {
+			_ = target.Close(websocket.StatusPolicyViolation, "rejected")
+		}
 		return
 	}
+	o.approved = true
 	sess.approved = true
-	op := sess.operator.conn
-	opV, tgV := sess.operator.v, sess.target.v
+	opV, tgV := o.v, sess.target.v
 	target := sess.target.conn
 	s.mu.Unlock()
 	var creds *ICECreds
@@ -601,43 +746,77 @@ func (s *Server) handleApprove(conn *websocket.Conn, code string, ok bool, reaso
 	// The target learns its credential before the operator is told to send
 	// an offer, so the "ice" message always precedes the first signal.
 	if creds != nil && tgV >= 2 {
-		_ = s.write(target, Message{Type: "ice", ICE: creds})
+		im := Message{Type: "ice", ICE: creds}
+		if multi {
+			im.Peer = o.id
+		}
+		_ = s.write(target, im)
 	}
 	approved := Message{Type: "approved"}
 	if opV >= 2 {
 		approved.ICE = creds
 	}
-	_ = s.write(op, approved)
+	_ = s.write(o.conn, approved)
 }
 
-func (s *Server) forward(code string, from Role, msg Message) {
+// forward relays signal/close between the target and one operator (opID:
+// sender for operator messages; msg.Peer selects the receiver for target
+// messages, legacy targets have a single operator).
+func (s *Server) forward(code string, from Role, opID string, msg Message) {
 	s.mu.Lock()
 	sess := s.sessions[code]
 	if sess == nil {
 		s.mu.Unlock()
 		return
 	}
-	if !sess.approved {
-		var dst *websocket.Conn
-		if from == RoleTarget {
-			dst = sess.target.conn
-		} else {
-			dst = sess.operator.conn
+	if from == RoleTarget && msg.Type == "close" {
+		delete(s.sessions, code)
+		var dsts []*websocket.Conn
+		for _, o := range sess.ops {
+			if o.approved {
+				dsts = append(dsts, o.conn)
+			}
 		}
 		s.mu.Unlock()
-		_ = s.write(dst, Message{Type: "error", Reason: "approval_required"})
+		for _, d := range dsts {
+			_ = s.write(d, msg)
+		}
+		s.closePeers(sess)
+		return
+	}
+	var o *opPeer
+	if from == RoleTarget {
+		o = sess.op(msg.Peer)
+	} else {
+		o = sess.ops[opID]
+	}
+	if o == nil {
+		s.mu.Unlock()
+		return
+	}
+	if !o.approved {
+		src := sess.target.conn
+		if from == RoleOperator {
+			src = o.conn
+		}
+		s.mu.Unlock()
+		_ = s.write(src, Message{Type: "error", Reason: "approval_required"})
 		return
 	}
 	var dst *websocket.Conn
-	if from == RoleTarget && sess.operator != nil {
-		dst = sess.operator.conn
-	}
-	if from == RoleOperator && sess.target != nil {
+	closeSession := false
+	if from == RoleTarget {
+		dst = o.conn
+		msg.Peer = ""
+	} else {
 		dst = sess.target.conn
-	}
-	closeSession := msg.Type == "close"
-	if closeSession {
-		delete(s.sessions, code)
+		if sess.multi() {
+			msg.Peer = o.id
+		}
+		if msg.Type == "close" { // legacy operator close ends the session
+			closeSession = true
+			delete(s.sessions, code)
+		}
 	}
 	s.mu.Unlock()
 
@@ -665,7 +844,15 @@ func (s *Server) removeOwned(code string, conn *websocket.Conn) {
 }
 
 func (sess *session) owns(conn *websocket.Conn) bool {
-	return (sess.target != nil && sess.target.conn == conn) || (sess.operator != nil && sess.operator.conn == conn)
+	if sess.target != nil && sess.target.conn == conn {
+		return true
+	}
+	for _, o := range sess.ops {
+		if o.conn == conn {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) remove(code string) {
@@ -678,18 +865,58 @@ func (s *Server) remove(code string) {
 	}
 }
 
+// closePeers closes every socket of a session that is no longer in the map
+// (callers delete it first, so sess.ops is not mutated concurrently).
 func (s *Server) closePeers(sess *session) {
-	seen := make(map[*websocket.Conn]struct{}, 2)
-	for _, p := range []*peer{sess.target, sess.operator} {
-		if p == nil || p.conn == nil {
-			continue
-		}
-		if _, ok := seen[p.conn]; ok {
-			continue
-		}
-		seen[p.conn] = struct{}{}
-		_ = p.conn.Close(websocket.StatusNormalClosure, "session closed")
+	s.mu.Lock()
+	conns := make([]*websocket.Conn, 0, 1+len(sess.ops))
+	if sess.target != nil && sess.target.conn != nil {
+		conns = append(conns, sess.target.conn)
 	}
+	for _, o := range sess.ops {
+		if o.conn != nil {
+			conns = append(conns, o.conn)
+		}
+	}
+	s.mu.Unlock()
+	for _, c := range conns {
+		go c.Close(websocket.StatusNormalClosure, "session closed") // close handshakes must not stall callers
+	}
+}
+
+// pingLoop drops a connection that stops answering pings.
+func pingLoop(ctx context.Context, conn *websocket.Conn) {
+	t := time.NewTicker(pingInterval)
+	defer t.Stop()
+	misses := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			pctx, cancel := context.WithTimeout(ctx, pingTimeout)
+			err := conn.Ping(pctx)
+			cancel()
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				misses++
+				if misses >= 2 {
+					_ = conn.Close(websocket.StatusGoingAway, "ping timeout")
+					return
+				}
+				continue
+			}
+			misses = 0
+		}
+	}
+}
+
+func newPeerID() string {
+	var b [6]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 func (s *Server) write(conn *websocket.Conn, msg Message) error {
@@ -719,7 +946,7 @@ func (s *Server) cleanupExpired() {
 	var expired []*session
 	s.mu.Lock()
 	for code, sess := range s.sessions {
-		if !sess.persistent && !sess.approved && now.Sub(sess.createdAt) > s.ttl {
+		if !sess.persistent && !sess.approved && len(sess.ops) == 0 && now.Sub(sess.createdAt) > s.ttl {
 			delete(s.sessions, code)
 			expired = append(expired, sess)
 		}

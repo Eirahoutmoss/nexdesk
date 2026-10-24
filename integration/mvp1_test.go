@@ -228,8 +228,16 @@ func TestEndToEndSignalingWebRTC(t *testing.T) {
 	// separate "candidate" signals are expected (the counters may stay 0).
 	_, _ = operatorCandidates.Load(), targetCandidates.Load()
 
-	if err := opPeer.SendPing(); err != nil {
-		t.Fatal(err)
+	// "connected" can precede the data channel opening by a few ms.
+	var perr error
+	for i := 0; i < 50; i++ {
+		if perr = opPeer.SendPing(); perr == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if perr != nil {
+		t.Fatal(perr)
 	}
 	select {
 	case <-pong:

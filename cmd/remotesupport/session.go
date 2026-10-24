@@ -81,7 +81,7 @@ func clearChildren() {
 	clearResolutionButtons()
 	hideBookControls()
 	for _, h := range []uintptr{
-		state.homeGet, state.homeGive, state.codeLabel, state.remoteEdit, state.action, state.copy, state.back, state.fileSend, state.fullscreenButton, state.settingsEndpoint, state.settingsQuality, state.settingsResolution, state.settingsSave, state.settingsReset, state.settingsIdle, state.settingsIdleAction, state.settingsInternet, state.remotePass, state.techDev, state.techDevManage, state.devOn, state.devId, state.devPass, state.devSave, state.settingsTurnURL, state.settingsTurnUser, state.settingsTurnPass, state.aboutTheme, state.aboutUpdate, state.elevate, state.clipSend, state.clipGet, state.chatInput, state.chatSend, state.stayOpen, state.actionsBtn,
+		state.homeGet, state.homeGive, state.codeLabel, state.remoteEdit, state.action, state.copy, state.back, state.fileSend, state.fullscreenButton, state.settingsEndpoint, state.settingsQuality, state.settingsResolution, state.settingsSave, state.settingsReset, state.settingsIdle, state.settingsIdleAction, state.settingsInternet, state.remotePass, state.techDev, state.techDevManage, state.devOn, state.devId, state.devPass, state.devSave, state.settingsTurnURL, state.settingsTurnUser, state.settingsTurnPass, state.aboutTheme, state.aboutUpdate, state.elevate, state.clipSend, state.clipGet, state.chatInput, state.chatSend, state.stayOpen, state.actionsBtn, state.techsBtn,
 	} {
 		hide(h)
 	}
@@ -234,19 +234,32 @@ func startTarget() {
 // true when the channel was lost (read error) rather than closed on purpose,
 // so a caller can keep a still-live WebRTC session running.
 func targetLoop(ctx context.Context, c *clientsignaling.Client) (lost bool) {
+	return targetLoopMode(ctx, c, false)
+}
+
+// targetLoopMode: device=true is a registered device (the password already
+// authorised the technician, so joins are announced rather than asked).
+// Approval runs off the read loop, so several technicians can ask at once and
+// the server's keepalive pings are answered while a dialog is open.
+func targetLoopMode(ctx context.Context, c *clientsignaling.Client, device bool) (lost bool) {
 	defer logCrash("targetLoop")
+	defer func() {
+		if !lost || techCount() == 0 {
+			techDropAll(c)
+		}
+	}()
 	for {
 		msg, err := c.Read(ctx)
 		if err != nil {
 			lost = true
 			switch {
-			case everConnected.Load():
+			case techCount() > 0:
 				// Media flows peer-to-peer over WebRTC; the signaling socket is
 				// only needed for setup and reconnect. A drop here is harmless,
 				// and the peer-state watcher owns the real connection status, so
 				// don't overwrite a live "BAĞLANDI" with a false "closed".
 				netlogf("Sinyal kanalı kapandı (WebRTC aktif, bağlantı sürüyor): %v", err)
-			case codeExpiryUnix.Load() > 0 && time.Now().Unix() >= codeExpiryUnix.Load():
+			case codeExpiryUnix.Load() > 0 && time.Now().Unix() >= codeExpiryUnix.Load() && !everConnected.Load():
 				setStatus("● Kod süresi doldu — Geri dönüp yeni kod oluşturun.")
 			default:
 				setStatus("● Bağlantı kapandı.")
@@ -256,89 +269,86 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) (lost bool) {
 
 		switch msg.Type {
 		case "peer_joined":
+			t := techAdd(c, msg.Peer, msg.Name, msg.From)
 			messageBeep.Call(0x00000040) // MB_ICONASTERISK
 			if state.hwnd != 0 {
 				flashWindow.Call(state.hwnd, 1)
 			}
-			auditLog("Bağlantı isteği alındı: " + describeRequester(msg.Name, msg.From))
-			ok := askApproval(msg.Code, msg.Name, msg.From)
-			if err := c.Approve(ctx, ok, ""); err != nil {
-				setStatus("● Onay gönderilemedi: " + err.Error())
-				return false
-			}
-			if ok && c.HasFeature(signaling.FeatureTURNCred) {
-				// v2 server: the per-session TURN credential arrives right
-				// after our approval and before the operator's offer.
-				rctx, rcancel := context.WithTimeout(ctx, 5*time.Second)
-				im, ierr := c.Read(rctx)
-				rcancel()
-				if ierr != nil || im.Type != "ice" {
-					netlogf("TURN kimliği beklenirken: tip=%q hata=%v", im.Type, ierr)
-					setStatus("● Sunucudan TURN kimliği alınamadı.")
-					return false
+			who := describeRequester(msg.Name, msg.From)
+			if device {
+				auditLog("Teknisyen cihaz parolasıyla bağlanıyor: " + who)
+				setStatus("● Teknisyen bağlanıyor: " + techDisplayName(t))
+				if err := c.ApprovePeer(ctx, msg.Peer, true, ""); err != nil {
+					setStatus("● Onay gönderilemedi: " + err.Error())
 				}
-				setSessionTURN(im.ICE)
-			}
-			if !ok {
-				auditLog("İstek reddedildi")
-				setStatus("Bağlantı isteği reddedildi.")
 				continue
 			}
-
-			peer, err := newPeer(ctx, c, true)
-			if err != nil {
-				setStatus("● WebRTC başlatılamadı: " + err.Error())
-				return false
+			auditLog("Bağlantı isteği alındı: " + who)
+			go func(id, code, name, from string) {
+				defer logCrash("approval")
+				ok := askApproval(code, name, from)
+				if err := c.ApprovePeer(ctx, id, ok, ""); err != nil {
+					setStatus("● Onay gönderilemedi: " + err.Error())
+					return
+				}
+				if !ok {
+					techRemove(c, id, "")
+					auditLog("İstek reddedildi: " + describeRequester(name, from))
+					if techCount() == 0 {
+						setStatus("Bağlantı isteği reddedildi.")
+					}
+					return
+				}
+				setStatus("● İstek onaylandı. Güvenli bağlantı kuruluyor...")
+			}(msg.Peer, msg.Code, msg.Name, msg.From)
+		case "ice":
+			// Per-session TURN credential, sent right after an approval and
+			// before that technician's offer.
+			if msg.ICE != nil {
+				setSessionTURN(msg.ICE)
 			}
-			state.mu.Lock()
-			state.peer = peer
-			state.mu.Unlock()
-
-			peer.SetControlHandler(func(msg string) { defer logCrash("control"); handleRemoteInput(peer, msg) })
-			peer.SetFileHandler(func(d []byte) { defer logCrash("file"); handleRemoteFile(d) })
-			setStatus("● İstek onaylandı. Güvenli bağlantı kuruluyor...")
-			if state.mode != 1 { // device mode: a session is starting, show it
-				state.mu.Lock()
-				state.mode = 1
-				state.mu.Unlock()
-			}
-			startCapture(peer, ctx)
-			go watchPeer(peer)
 		case "signal":
-			state.mu.Lock()
-			p := state.peer
-			state.mu.Unlock()
+			t := techGet(c, msg.Peer)
+			if t == nil {
+				t = techAdd(c, msg.Peer, "", "") // legacy server or reconnect race
+			}
+			techMu.Lock()
+			p := t.peer
+			techMu.Unlock()
 			sig := webrtcpeer.Signal{Kind: msg.Kind, Payload: msg.Payload}
 			switch sig.Kind {
 			case "offer":
-				// A second offer always comes from a NEW operator-side peer
-				// (auto-reconnect). Our side may still look connected (loss is
-				// often detected on one end first), so any peer that already
-				// negotiated is replaced instead of fed a foreign offer.
+				// A later offer from the same technician comes from a NEW
+				// operator-side peer (auto-reconnect); replace ours.
 				if p == nil || peerDead(p) || p.HasRemote() {
-					p = targetRebuild(ctx, c)
-					if p == nil {
+					np, err := techBuildPeer(ctx, c, t)
+					if err != nil {
+						setStatus("● WebRTC başlatılamadı: " + err.Error())
 						continue
 					}
+					p = np
 				}
 				answer, err := p.AcceptOffer(ctx, sig)
 				if err != nil {
 					// Keep the signaling loop alive: the operator retries.
 					netlogf("Teklif işlenemedi: %v", err)
-					setStatus("● Teklif işlenemedi, karşı tarafın yeniden denemesi bekleniyor: " + err.Error())
 					continue
 				}
-				if err := c.Signal(ctx, answer.Kind, answer.Payload); err != nil {
+				if err := c.SignalTo(ctx, msg.Peer, answer.Kind, answer.Payload); err != nil {
 					setStatus("● Cevap gönderilemedi: " + err.Error())
 					return true
 				}
 			case "candidate":
-				if p == nil {
-					continue
+				if p != nil {
+					if err := p.AddSignal(sig); err != nil {
+						netlogf("ICE adayı işlenemedi: %v", err)
+					}
 				}
-				if err := p.AddSignal(sig); err != nil {
-					setStatus("● ICE adayı işlenemedi: " + err.Error())
-				}
+			}
+		case "peer_left":
+			techRemove(c, msg.Peer, "ayrıldı")
+			if techCount() == 0 && state.mode == 1 {
+				setStatus("● Teknisyen ayrıldı — yeni bağlantı bekleniyor.")
 			}
 		case "closed":
 			setStatus("Bağlantı sonlandırıldı.")
@@ -492,7 +502,15 @@ func startOperator(code string) {
 }
 
 func newPeer(ctx context.Context, c *clientsignaling.Client, approved bool) (*webrtcpeer.Peer, error) {
+	_ = approved
+	return newPeerTo(ctx, c, "")
+}
+
+// newPeerTo creates a peer whose outbound signals are addressed to one
+// operator (peerID "" for the operator side / legacy sessions).
+func newPeerTo(ctx context.Context, c *clientsignaling.Client, peerID string) (*webrtcpeer.Peer, error) {
 	_ = ctx
+	approved := true
 	ice := iceServers()
 	var urls []string
 	for _, s := range ice {
@@ -503,7 +521,7 @@ func newPeer(ctx context.Context, c *clientsignaling.Client, approved bool) (*we
 	// falls back to the TURN relay when direct isn't reachable.
 	netlogf("WebRTC başlıyor, ICE sunucuları: %s", strings.Join(urls, ", "))
 	p, err := webrtcpeer.NewWithSettings(approved, webrtc.Configuration{ICEServers: ice}, peerSettings(), func(sctx context.Context, sig webrtcpeer.Signal) error {
-		return c.Signal(sctx, sig.Kind, sig.Payload)
+		return c.SignalTo(sctx, peerID, sig.Kind, sig.Payload)
 	})
 	if err == nil {
 		p.SetDiagLogger(netlogf)
@@ -536,6 +554,9 @@ func watchPeer(peer *webrtcpeer.Peer) {
 			if st == webrtc.PeerConnectionStateConnected && announced {
 				netlogf("Bağlantı kendiliğinden toparlandı")
 				setStatus("● BAĞLANDI  •  Güvenli WebRTC bağlantısı aktif")
+				if state.mode == 1 {
+					techConnected(peer)
+				}
 			}
 		}
 		switch st {
@@ -567,7 +588,9 @@ func watchPeer(peer *webrtcpeer.Peer) {
 			if v, ok := peer.FingerprintSAS(getActiveCode()); ok {
 				setConnInfo("", v)
 			}
-			startSessionStats(peer)
+			if state.mode != 1 || sessionStartUnix.Load() == 0 {
+				startSessionStats(peer)
+			}
 			onB1Connected(peer)
 			recRole := "Destek verildi"
 			if state.mode == 1 {
@@ -576,6 +599,9 @@ func watchPeer(peer *webrtcpeer.Peer) {
 			addRecent(recRole, getActiveCode())
 			auditLog("Bağlandı: " + recRole)
 			setStatus("● BAĞLANDI  •  Güvenli WebRTC bağlantısı aktif")
+			if state.mode == 1 {
+				techConnected(peer) // roster to everyone, status shows who is here
+			}
 			_ = peer.SendPing()
 		case webrtc.PeerConnectionStateDisconnected:
 			// ICE reports Disconnected after a few seconds without traffic and
@@ -594,11 +620,19 @@ func watchPeer(peer *webrtcpeer.Peer) {
 			}
 			fallthrough
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
-			state.mu.Lock()
-			current := state.peer == peer
-			state.mu.Unlock()
+			var current bool
+			if state.mode == 1 {
+				current = techOwns(peer) != nil
+			} else {
+				state.mu.Lock()
+				current = state.peer == peer
+				state.mu.Unlock()
+			}
 			if !current {
-				return // replaced by a reconnect/handover; the new peer has its own watcher
+				return // replaced by a reconnect/handover/kick; nothing to report
+			}
+			if announced && state.mode == 1 && techPeerDropped(peer) {
+				return // other technicians are still connected; this one may reconnect
 			}
 			if announced {
 				onPeerDropped(state.mode)
@@ -884,13 +918,17 @@ func joinErrorText(err error, ep string) string {
 	case strings.Contains(e, "client_outdated"):
 		return "Programınız bu sunucu için eski. NexDesk'in güncel sürümünü kurun."
 	case strings.Contains(e, "invalid_or_expired_code"):
-		return "Kod bu sunucuda bulunamadı ya da süresi doldu (" + ep + "). Kod 5 dk geçerli ve tek kullanımlıktır; karşı tarafta yeni kod oluşturup tekrar deneyin."
+		return "Kod bu sunucuda bulunamadı ya da süresi doldu (" + ep + "). Kod, onaylanmadan önce 5 dk geçerlidir; karşı tarafta yeni kod oluşturup tekrar deneyin."
 	case strings.Contains(e, "rate_limited"):
 		return "Çok fazla hatalı deneme — 1 dakika bekleyip tekrar deneyin."
 	case strings.Contains(e, "invalid_code"):
 		return "Kod biçimi geçersiz."
 	case strings.Contains(e, "device_auth_failed"):
 		return "Cihaz kimliği ya da parolası hatalı."
+	case strings.Contains(e, "device_busy"):
+		return "Cihaz şu an başka bir teknisyenle oturumda (karşı tarafta eski NexDesk sürümü — 1.4 ve sonrasında birden fazla teknisyen aynı anda bağlanabilir)."
+	case strings.Contains(e, "session_full"):
+		return "Bu oturumdaki teknisyen sayısı üst sınıra ulaştı."
 	case strings.Contains(e, "unknown_device"):
 		return "Böyle bir kayıtlı cihaz yok (çevrimdışı olabilir)."
 	default:

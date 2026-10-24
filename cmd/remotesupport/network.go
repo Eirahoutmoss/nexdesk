@@ -4,12 +4,15 @@ package main
 
 import (
 	"context"
+	"image"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/eirahoutmoss/remotesupport/client/capture"
@@ -23,7 +26,24 @@ import (
 func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 	go func() {
 		defer logCrash("capture")
-		defer clearPrivacy()
+		counted := false
+		defer func() {
+			// Several technicians each have a stream; the session-wide state
+			// (capturing flag, privacy curtain) ends with the last one.
+			n := activeStreams.Load()
+			if counted {
+				n = activeStreams.Add(-1)
+			}
+			tilesByPeer.Delete(peer)
+			if n > 0 {
+				return
+			}
+			capturing.Store(false)
+			clearPrivacy()
+			if state.hwnd != 0 {
+				invalidateRect.Call(state.hwnd, 0, 0)
+			}
+		}()
 		if err := peer.WaitScreen(ctx); err != nil {
 			if ctx.Err() == nil {
 				setStatus("● Ekran kanalı bekleniyor: " + err.Error())
@@ -37,6 +57,7 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 		defer ticker.Stop()
 		enc := &tileEncoder{}
 		activeTiles.Store(enc)
+		tilesByPeer.Store(peer, enc)
 		var seq uint64
 		var cong congestion
 		for {
@@ -60,7 +81,7 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 					quality = 88
 				}
 				quality, maxHeight = adaptParams(quality, maxHeight)
-				img, err := capture.CaptureMonitorImage(monitor, maxHeight)
+				img, err := sharedCapture(monitor, maxHeight)
 				if err != nil {
 					// Ctrl+Alt+Del / UAC / lock screen switch to the secure desktop,
 					// where capture fails. Keep retrying instead of ending the stream.
@@ -86,17 +107,47 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 					JPEG:    payload,
 				})
 				if err != nil {
-					setStatus("● Ekran DataChannel gönderim hatası: " + err.Error())
-					capturing.Store(false)
+					netlogf("Ekran gönderim hatası: %v", err)
 					return
 				}
 				// Bir kare fiilen bu makineden çıktı: agent artık görülüyor.
+				if !counted {
+					counted = true
+					activeStreams.Add(1)
+				}
 				if capturing.CompareAndSwap(false, true) && state.hwnd != 0 {
 					invalidateRect.Call(state.hwnd, 0, 0)
 				}
 			}
 		}
 	}()
+}
+
+var (
+	activeStreams atomic.Int32 // screen streams that have sent at least one frame
+	tilesByPeer   sync.Map     // *webrtcpeer.Peer -> *tileEncoder
+
+	capMu    sync.Mutex
+	capImg   *image.RGBA
+	capKey   [2]int
+	capAt    time.Time
+	capErr   error
+	capReuse = 50 * time.Millisecond
+)
+
+// sharedCapture grabs the screen once for all technicians' streams: a frame
+// captured within capReuse for the same monitor/size is handed out again.
+// Encoders only read the image, so sharing it is safe.
+func sharedCapture(monitor, maxHeight int) (*image.RGBA, error) {
+	capMu.Lock()
+	defer capMu.Unlock()
+	k := [2]int{monitor, maxHeight}
+	if k == capKey && time.Since(capAt) < capReuse && (capImg != nil || capErr != nil) {
+		return capImg, capErr
+	}
+	img, err := capture.CaptureMonitorImage(monitor, maxHeight)
+	capImg, capErr, capKey, capAt = img, err, k, time.Now()
+	return img, err
 }
 
 func startEmbeddedSignaling() {

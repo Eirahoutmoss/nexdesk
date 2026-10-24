@@ -210,12 +210,31 @@ func (c *Client) Approve(ctx context.Context, ok bool, reason string) error {
 }
 
 func (c *Client) Signal(ctx context.Context, sigKind string, payload any) error {
+	return c.SignalTo(ctx, "", sigKind, payload)
+}
+
+// SignalTo sends a signal to one operator (v3 target side); peer "" means
+// the single operator of a legacy session.
+func (c *Client) SignalTo(ctx context.Context, peer, sigKind string, payload any) error {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	return c.writeMsg(ctx, server.Message{Type: "signal", Kind: sigKind, Payload: b})
+	return c.writeMsg(ctx, server.Message{Type: "signal", Kind: sigKind, Payload: b, Peer: peer})
 }
+
+// ApprovePeer answers one operator's join request (v3 target side).
+func (c *Client) ApprovePeer(ctx context.Context, peer string, ok bool, reason string) error {
+	return c.writeMsg(ctx, server.Message{Type: "approve", Approved: ok, Reason: reason, Peer: peer})
+}
+
+// Kick drops one operator from the session (v3 target side).
+func (c *Client) Kick(ctx context.Context, peer string) error {
+	return c.writeMsg(ctx, server.Message{Type: "kick", Peer: peer})
+}
+
+// Multi reports whether the server lets this target serve several operators.
+func (c *Client) Multi() bool { return c.HasFeature(server.FeatureMulti) }
 
 // writeMsg serializes every outbound frame. pion sends ICE candidates from its
 // own goroutines while the main loop may also be writing (offer/answer,

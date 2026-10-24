@@ -58,6 +58,7 @@ const (
 	WM_APP_IDLE_CLOSE     = 0x8003
 	WM_APP_CURTAIN        = 0x8004
 	WM_APP_ANNOT          = 0x8005
+	WM_APP_RELAYOUT       = 0x8040
 )
 
 var (

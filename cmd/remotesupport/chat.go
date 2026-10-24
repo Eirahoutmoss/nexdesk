@@ -73,13 +73,17 @@ func sendChat() {
 	if len(txt) > 2000 {
 		txt = txt[:2000]
 	}
-	state.mu.Lock()
-	pr := state.peer
-	state.mu.Unlock()
-	if pr == nil {
+	peers := ctlPeers() // target: every technician sees the user's message
+	if len(peers) == 0 {
 		return
 	}
-	if err := pr.SendControlText("CHAT:" + txt); err != nil {
+	var err error
+	for _, pr := range peers {
+		if e := pr.SendControlText("CHAT:" + txt); e != nil {
+			err = e
+		}
+	}
+	if err != nil && len(peers) == 1 {
 		setStatus("● Mesaj gönderilemedi: " + err.Error())
 		return
 	}
@@ -229,7 +233,7 @@ func addRecent(role, code string) {
 	recentMu.Unlock()
 	if path := recentPath(); path != "" {
 		if b, err := json.MarshalIndent(snap, "", "  "); err == nil {
-			_ = os.WriteFile(path, b, 0600)
+			_ = writeFileAtomic(path, b, 0600)
 		}
 	}
 	if state.hwnd != 0 {

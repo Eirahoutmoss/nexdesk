@@ -111,6 +111,7 @@ func layoutUI() {
 	hide(state.stayOpen)
 	hide(state.actionsBtn)
 	hide(state.shareLink)
+	hide(state.techsBtn)
 
 	if connected && !fullscreen.Load() {
 		// Toolbar action buttons sit on the painted toolbar surface (y≈104).
@@ -202,6 +203,7 @@ func layoutUI() {
 				moveControl(state.chatSend, cg.sendX, cg.inputY, cg.sendW, cg.inputH, true)
 			}
 			moveControl(state.back, w-gutter-180, 118, 168, 40, true)
+			moveControl(state.techsBtn, w-gutter-380, 118, 190, 40, techCount() > 0)
 			moveControl(state.stayOpen, contentX, 214, 150, 40, idleWarn.Load())
 			return
 		}

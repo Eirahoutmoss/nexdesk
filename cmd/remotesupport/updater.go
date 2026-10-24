@@ -127,7 +127,7 @@ func sessionActive() bool {
 	state.mu.Lock()
 	p := state.peer
 	state.mu.Unlock()
-	return p != nil && p.ConnectionState() == webrtc.PeerConnectionStateConnected
+	return (p != nil && p.ConnectionState() == webrtc.PeerConnectionStateConnected) || len(techPeers()) > 0
 }
 
 func installUpdate(rel *update.Release) {
