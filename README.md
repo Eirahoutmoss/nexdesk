@@ -6,7 +6,7 @@
 
 ### Uzaktan destek, daha kolay.
 
-Windows ve Android için **açık, güvenli ve tamamen kullanıcı onaylı** uzak masaüstü destek uygulaması.
+Windows, Android ve tarayıcı (iPhone dahil) için **açık, güvenli ve tamamen kullanıcı onaylı** uzak masaüstü destek uygulaması.
 Ara sunucuya muhtaç değil, reklam yok, arka planda casusluk yok — sadece iki bilgisayar, bir kod ve uçtan uca şifreli bir bağlantı.
 
 <br/>
@@ -44,6 +44,7 @@ Sık destek verdiğiniz bilgisayarlar için ise **rızaya dayalı gözetimsiz er
 | ✅ **Her zaman onaylı** | Kodla gelen her teknisyen için ayrı "İzin Ver" sorulur; kayıtlı cihazda parola yeterlidir, bağlanan her teknisyen bildirilir ve kaydedilir. |
 | 👥 **Aynı cihaza birden fazla teknisyen** | Lisans, süre ya da kişi sınırı yok. Bağlıları listeleyin, tek tek ya da toplu bağlantı kesin; fare/klavyenin kimde olduğu herkese gösterilir. |
 | 📱 **Android teknisyen uygulaması** | Telefondan destek verin: dokunmatik kontrol, Türkçe karakterli yazım, özel tuşlar, monitör seçimi, kayıtlı cihazlar. |
+| 🌐 **Tarayıcı / iPhone uygulaması** | Kurulum yok: sunucunuzun adresini Safari'de açın, "Ana Ekrana Ekle" — iPhone, Android ve bilgisayar tarayıcısından destek verin. |
 | 📷 **Karekodla bağlanma** | Telefonla masaüstündeki karekodu okutun ya da `nexdesk://` linkine dokunun — kod yazmadan bağlanın. |
 | 🖥️ **Cihaz erişimi (gözetimsiz)** | Rızaya dayalı: karşı taraf bir kez onaylar, sonra teknisyen **kimlik + parola** ile kod sormadan bağlanır. Her zaman kapatılabilir. |
 | 🪟 **Çoklu oturum** | Tek `.exe` ile aynı anda birden fazla bağlantı; her pencere başlığında ilgili oturum kodu. |
@@ -172,6 +173,21 @@ Uygulama, Windows sürümüyle aynı Go çekirdeğini (`client/`, `shared/`, `mo
 
 ---
 
+## 🌐 Tarayıcı / iPhone uygulaması
+
+Mac, App Store ya da kurulum gerekmeden **iPhone'dan** (ve her tarayıcıdan) destek verin. Uygulama, signaling sunucusunun içine gömülüdür ve `https://<sunucu>/` adresinde yayınlanır.
+
+- **iPhone:** Safari'de adresi açın → Paylaş → **Ana Ekrana Ekle**. Tam ekran, simgeli bir uygulama gibi açılır.
+- **Bilgisayar tarayıcısı:** Fare, tekerlek ve gerçek klavye desteklenir; yazılanlar karakter olarak gider (Türkçe karakterler düzenden bağımsız), kısayollar (Ctrl+C…) tuş olarak.
+- **Telefon:** Android uygulamasıyla aynı dokunmatik hareketler, telefon klavyesi, özel tuşlar, monitör seçimi, sohbet, bağlantı bilgisi ve güvenlik kodu; birden fazla teknisyenli oturumlara katılır.
+- **Kayıtlı cihazlar:** Parolalar tarayıcıda, dışarı çıkarılamayan bir anahtarla şifreli saklanır.
+- **Güncelleme:** Sunucudaki program güncellenince uygulama da güncellenir; ayrıca dağıtım gerekmez.
+- `https://<sunucu>/#code=1234567890` biçimindeki linkler doğrudan o oturuma bağlar.
+
+**Sunucu tarafı:** `sunucu-kur.sh` web uygulamasını varsayılan olarak açar. Tarayıcılar pinli öz-imzalı sertifikayı kabul etmediği için gerçek bir alan adı ve sertifika gerekir; betik, hesap gerektirmeyen `<dış-ip>.sslip.io` adını kullanır (kendi alan adınız için `WEB_DOMAIN=destek.kurum.tr`). Sertifikayı signaling programı Let's Encrypt'ten **kendisi alır ve yeniler** (TLS-ALPN, 443 üzerinden; certbot ve 80 numaralı port gerekmez). Güvenlik listesinde **TCP 443** açık olmalıdır. Masaüstü ve Android uygulamaları pinli 8443'ü kullanmaya devam eder.
+
+---
+
 ## 🖥️ Cihaz erişimi (gözetimsiz bağlantı)
 
 Sık destek verdiğiniz bilgisayarlar için her seferinde "kod oluştur / izin ver" döngüsü yerine **kimlik + parola ile doğrudan** bağlanabilirsiniz. Tamamen **rızaya dayalıdır** — karşı taraf açıkça açar ve istediğinde kapatır; gizli/sessiz erişim yoktur.
@@ -244,7 +260,7 @@ go build -trimpath -ldflags='-s -w' -o sunucu\nexdesk-signaling ./cmd/signaling
 1. **cloud.oracle.com** → ücretsiz hesap. *Home region* sonradan değişmez; Türkiye'ye yakın bir Avrupa bölgesi seçin (Frankfurt/Amsterdam).
 2. **Compute → Instances → Create:** Ubuntu 22.04, shape **VM.Standard.E2.1.Micro** (*Always Free*), SSH anahtarını indirin.
 3. Instance oluşunca public IP yoksa: VNIC → IP administration → Edit → **Ephemeral public IP**.
-4. **Subnet → Security List → Add Ingress Rules** (kaynak `0.0.0.0/0`): TCP 8443, TCP 8091 (yalnızca geçiş döneminde), UDP 3478, TCP 3478, UDP 49160-49200.
+4. **Subnet → Security List → Add Ingress Rules** (kaynak `0.0.0.0/0`): TCP 443 (web uygulaması), TCP 8443, TCP 8091 (yalnızca geçiş döneminde), UDP 3478, TCP 3478, UDP 49160-49200.
 5. Dosyaları gönderip kurun:
    ```bash
    scp -i anahtar.key sunucu/sunucu-kur.sh sunucu/nexdesk-signaling ubuntu@SUNUCU_IP:~/
@@ -463,6 +479,7 @@ NexDesk/
 │  └─ landisc/                  #   LAN keşfi
 ├─ mobile/                      # Android Go çekirdeği (gomobile bind)
 ├─ android/                     # Android uygulaması (Kotlin/Compose, Gradle)
+├─ web/                         # tarayıcı / iPhone uygulaması (PWA), signaling'e gömülü
 ├─ integration/                 # uçtan uca testler (çoklu teknisyen dahil)
 ├─ sunucu/                      # sunucu-kur.sh (coturn + signaling kurulumu)
 └─ build.ps1 · build-apk.ps1 · release.ps1

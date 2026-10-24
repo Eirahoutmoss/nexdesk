@@ -22,6 +22,8 @@ import (
 
 	server "github.com/eirahoutmoss/remotesupport/server/signaling"
 	"github.com/eirahoutmoss/remotesupport/shared/landisc"
+	"github.com/eirahoutmoss/remotesupport/web"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 // Environment:
@@ -37,6 +39,11 @@ import (
 //	REMOTESUPPORT_MIN_CLIENT_V    reject clients below this protocol version (default 0)
 //	REMOTESUPPORT_DEVICE_STORE    JSON file persisting device-access passwords (technician access)
 //	REMOTESUPPORT_DISCOVERY       "off" disables LAN discovery on UDP 8090
+//	REMOTESUPPORT_WEB_DOMAIN      public DNS name for the browser technician app
+//	                              (e.g. 1-2-3-4.sslip.io): HTTPS + wss on
+//	                              REMOTESUPPORT_WEB_ADDR (default 0.0.0.0:443)
+//	                              with an automatic Let's Encrypt certificate
+//	REMOTESUPPORT_ACME_EMAIL      optional contact e-mail for Let's Encrypt
 func main() {
 	s := server.NewServer()
 	s.SetLogger(log.Printf)
@@ -76,6 +83,10 @@ func main() {
 			log.Printf("NexDesk signaling (TLS) dinleniyor: wss://%s/v1/ws", addr)
 			log.Fatal(srv.ListenAndServeTLS("", ""))
 		}()
+	}
+
+	if dom := strings.TrimSpace(os.Getenv("REMOTESUPPORT_WEB_DOMAIN")); dom != "" {
+		startWeb(dom, mux)
 	}
 
 	if !strings.EqualFold(os.Getenv("REMOTESUPPORT_DISCOVERY"), "off") {
@@ -170,4 +181,28 @@ func generateSelfSigned(certFile, keyFile string) error {
 		return err
 	}
 	return os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644)
+}
+
+// startWeb serves the browser app and the same signaling endpoint over
+// HTTPS with a publicly trusted certificate (browsers cannot use the pinned
+// self-signed one). The certificate comes from Let's Encrypt via TLS-ALPN-01
+// on the same port, so no port 80 and no certbot are needed.
+func startWeb(domain string, sig http.Handler) {
+	addr := envOr("REMOTESUPPORT_WEB_ADDR", "0.0.0.0:443")
+	cacheDir := filepath.Join(envOr("REMOTESUPPORT_TLS_DIR", "."), "acme")
+	m := &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(domain),
+		Cache:      autocert.DirCache(cacheDir),
+		Email:      strings.TrimSpace(os.Getenv("REMOTESUPPORT_ACME_EMAIL")),
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/v1/ws", sig)
+	mux.Handle("/healthz", sig)
+	mux.Handle("/", web.Handler())
+	tlsCfg := m.TLSConfig()
+	tlsCfg.MinVersion = tls.VersionTLS12
+	srv := &http.Server{Addr: addr, Handler: mux, TLSConfig: tlsCfg, ReadHeaderTimeout: 10 * time.Second}
+	log.Printf("NexDesk web uygulaması: https://%s/ (dinleniyor: %s)", domain, addr)
+	go func() { log.Fatal(srv.ListenAndServeTLS("", "")) }()
 }

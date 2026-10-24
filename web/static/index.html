@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0f182d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="NexDesk">
+<title>NexDesk</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<main id="home" class="screen">
+  <header class="top">
+    <img src="icon-192.png" alt="" class="logo">
+    <div><h1>NexDesk</h1><p class="muted">Uzaktan destek, daha kolay.</p></div>
+    <button id="btnSettings" class="icon" title="Ayarlar" aria-label="Ayarlar">⚙</button>
+  </header>
+
+  <div id="notice" class="notice hidden"></div>
+
+  <section class="card">
+    <label for="name">Adınız <span class="muted">(karşı tarafta görünür)</span></label>
+    <input id="name" autocomplete="name" maxlength="60" placeholder="Ad Soyad">
+  </section>
+
+  <section class="card">
+    <h2>Destek kodu ile bağlan</h2>
+    <input id="code" inputmode="numeric" autocomplete="off" placeholder="Kod (ör. 591 490 5011)" maxlength="20">
+    <button id="btnConnect" class="primary">Bağlan</button>
+  </section>
+
+  <section class="card">
+    <div class="row"><h2>Kayıtlı cihazlar</h2><button id="btnAddDev" class="icon" title="Cihaz ekle" aria-label="Cihaz ekle">＋</button></div>
+    <ul id="devices" class="list"></ul>
+    <p id="noDevices" class="muted">Henüz cihaz yok. ＋ ile ekleyin.</p>
+  </section>
+
+  <section class="card muted small" id="installHint">
+    iPhone'da: Paylaş <b>⎋</b> → <b>Ana Ekrana Ekle</b> ile uygulama gibi kullanın.
+  </section>
+</main>
+
+<main id="session" class="screen hidden">
+  <div class="bar">
+    <div class="titlebox"><div id="sTitle" class="title"></div><div id="sLine" class="muted small"></div></div>
+    <button id="tKbd" class="icon" title="Klavye" aria-label="Klavye">⌨</button>
+    <button id="tKeys" class="icon" title="Özel tuşlar" aria-label="Özel tuşlar">⌘</button>
+    <button id="tMon" class="icon hidden" title="Monitör" aria-label="Monitör">🖥<span id="tMonTxt"></span></button>
+    <button id="tChat" class="icon" title="Sohbet" aria-label="Sohbet">💬</button>
+    <button id="tInfo" class="icon" title="Bağlantı bilgisi" aria-label="Bağlantı bilgisi">ⓘ</button>
+    <button id="tClose" class="icon danger" title="Bağlantıyı kes" aria-label="Bağlantıyı kes">✕</button>
+  </div>
+  <div id="keybar" class="keybar hidden"></div>
+  <div id="stage" class="stage">
+    <canvas id="view"></canvas>
+    <div id="overlay" class="overlay"><div class="spinner"></div><div id="ovText">Bağlanılıyor…</div><button id="ovCancel">Vazgeç</button></div>
+  </div>
+  <textarea id="kbd" class="kbd" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-hidden="true"></textarea>
+</main>
+
+<dialog id="dlg"><form method="dialog" id="dlgForm"><h3 id="dlgTitle"></h3><div id="dlgBody"></div><div class="actions" id="dlgActions"></div></form></dialog>
+</body>
+</html>
