@@ -30,7 +30,7 @@ try {
 
     if ($Publish) {
         if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'gh CLI bulunamadı; dosyaları GitHub > Releases üzerinden elle yükleyin.' }
-        $args = @('release', 'create', "v$Ver", 'dist\NexDesk.exe', 'dist\NexDesk.exe.sig', '--repo', 'Eirahoutmoss/remotesupport', '--title', "NexDesk $Ver")
+        $args = @('release', 'create', "v$Ver", 'dist\NexDesk.exe', 'dist\NexDesk.exe.sig', '--repo', 'Eirahoutmoss/NexDesk', '--title', "NexDesk $Ver")
         if ($Notes) { $args += @('--notes', $Notes) } else { $args += '--generate-notes' }
         gh @args
         if ($LASTEXITCODE -ne 0) { throw 'GitHub sürümü oluşturulamadı.' }
