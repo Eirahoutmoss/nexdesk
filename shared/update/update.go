@@ -20,7 +20,7 @@ import (
 )
 
 // DefaultRepo is the GitHub repository releases are read from.
-const DefaultRepo = "Eirahoutmoss/remotesupport"
+const DefaultRepo = "Eirahoutmoss/NexDesk"
 
 // MaxExeSize bounds the download so a bad release cannot fill the disk.
 const MaxExeSize = 200 << 20
