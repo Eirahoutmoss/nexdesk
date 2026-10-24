@@ -10,17 +10,20 @@ try {
     $Ver = $m.Matches[0].Groups[1].Value
     Write-Host "== NexDesk Android $Ver"
 
-    # --- Android SDK / NDK / Java
-    $Sdk = $env:ANDROID_HOME
-    if (-not $Sdk) { $Sdk = $env:ANDROID_SDK_ROOT }
-    if (-not $Sdk) { $Sdk = Join-Path $env:LOCALAPPDATA 'Android\Sdk' }
-    if (-not (Test-Path $Sdk)) { throw "Android SDK bulunamadı ($Sdk). ANDROID_HOME ayarlayın." }
-    $env:ANDROID_HOME = $Sdk
-    if (-not $env:ANDROID_NDK_HOME) {
-        $ndk = Get-ChildItem (Join-Path $Sdk 'ndk') -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
-        if (-not $ndk) { throw 'Android NDK yok. Android Studio > SDK Manager > SDK Tools > "NDK (Side by side)" kurun.' }
-        $env:ANDROID_NDK_HOME = $ndk.FullName
+    # --- Android SDK / NDK: the first SDK folder that actually has an NDK
+    # (ANDROID_HOME may point at an older SDK than Android Studio's own).
+    $sdks = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, (Join-Path $env:LOCALAPPDATA 'Android\Sdk'), 'C:\Android\Sdk') |
+        Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+    $Sdk = $null; $ndk = $null
+    foreach ($s in $sdks) {
+        $n = Get-ChildItem (Join-Path $s 'ndk') -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
+        if ($n) { $Sdk = $s; $ndk = $n; break }
     }
+    if (-not $Sdk) { throw "Android NDK hiçbir SDK klasöründe yok ($($sdks -join ', ')). SDK Manager > SDK Tools > NDK (Side by side) kurun." }
+    # Gradle rejects ANDROID_HOME and ANDROID_SDK_ROOT pointing at different folders.
+    $env:ANDROID_HOME = $Sdk
+    $env:ANDROID_SDK_ROOT = $Sdk
+    $env:ANDROID_NDK_HOME = $ndk.FullName
     # Java 17+: JAVA_HOME, Android Studio'nun JBR'si, Adoptium/Microsoft JDK ya da PATH'teki java
     if (-not ($env:JAVA_HOME -and (Test-Path (Join-Path $env:JAVA_HOME 'bin\java.exe')))) {
         $env:JAVA_HOME = $null
@@ -87,8 +90,7 @@ try {
     }
 
     # --- APK
-    $lp = 'android\local.properties'
-    if (-not (Test-Path $lp)) { "sdk.dir=$($Sdk -replace '\\','/')" | Set-Content -Encoding ASCII $lp }
+    "sdk.dir=$($Sdk -replace '\\','/')" | Set-Content -Encoding ASCII 'android\local.properties' 
     Write-Host '== APK derleniyor (Gradle)'
     Push-Location android
     try {
