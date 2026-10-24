@@ -61,6 +61,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'gomobile init başarısız.' }
     go get golang.org/x/mobile/bind@latest
     if ($LASTEXITCODE -ne 0) { throw 'golang.org/x/mobile eklenemedi.' }
+    # pion's Android interface lister; v0.0.5 detects the API level itself.
+    # It links into net internals, hence -checklinkname=0 below (see its README).
+    go get github.com/wlynxg/anet@v0.0.5
+    if ($LASTEXITCODE -ne 0) { throw 'anet güncellenemedi.' }
 
     # --- built-in server settings (git-ignored, holds the TURN password)
     $local = 'cmd\remotesupport\assets\server-defaults.local.json'
@@ -71,7 +75,7 @@ try {
     Write-Host '== Go çekirdeği derleniyor (gomobile bind)'
     New-Item -ItemType Directory -Force -Path 'android\app\libs' | Out-Null
     $env:GOOS = ''; $env:GOARCH = ''; $env:CGO_ENABLED = ''
-    gomobile bind -target 'android/arm64,android/arm,android/amd64' -androidapi 24 -javapkg com.eirahoutmoss -ldflags '-s -w' -o 'android\app\libs\nexdesk.aar' ./mobile
+    gomobile bind -target 'android/arm64,android/arm,android/amd64' -androidapi 24 -javapkg com.eirahoutmoss -ldflags '-s -w -checklinkname=0' -o 'android\app\libs\nexdesk.aar' ./mobile
     if ($LASTEXITCODE -ne 0) { throw 'gomobile bind başarısız.' }
 
     # --- release keystore (same key for every release, or updates fail)
