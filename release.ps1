@@ -15,6 +15,10 @@ try {
     if (-not $Pub -or -not $Pub.Trim()) { throw 'Güncelleme anahtarı yok. Önce: go run ./cmd/nd-sign keygen -pub shared/update/update-pubkey.txt' }
     Write-Host "== Sürüm $Ver"
 
+    # New imports (e.g. the web app's certificate code) need go.sum entries.
+    go mod tidy
+    if ($LASTEXITCODE -ne 0) { throw 'go mod tidy başarısız.' }
+
     & (Join-Path $Root 'build.ps1')
     if ($LASTEXITCODE -ne 0) { throw 'Derleme başarısız.' }
 
