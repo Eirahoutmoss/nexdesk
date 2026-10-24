@@ -21,12 +21,27 @@ try {
         if (-not $ndk) { throw 'Android NDK yok. Android Studio > SDK Manager > SDK Tools > "NDK (Side by side)" kurun.' }
         $env:ANDROID_NDK_HOME = $ndk.FullName
     }
-    if (-not $env:JAVA_HOME) {
-        foreach ($j in @("$env:ProgramFiles\Android\Android Studio\jbr", "$env:ProgramFiles\Android\Android Studio\jre")) {
-            if (Test-Path $j) { $env:JAVA_HOME = $j; break }
+    # Java 17+: JAVA_HOME, Android Studio'nun JBR'si, Adoptium/Microsoft JDK ya da PATH'teki java
+    if (-not ($env:JAVA_HOME -and (Test-Path (Join-Path $env:JAVA_HOME 'bin\java.exe')))) {
+        $env:JAVA_HOME = $null
+        $cands = @(
+            "$env:ProgramFiles\Android\Android Studio*\jbr",
+            "$env:LOCALAPPDATA\Programs\Android Studio*\jbr",
+            "$env:LOCALAPPDATA\JetBrains\Toolbox\apps\AndroidStudio\*\*\jbr",
+            "$env:LOCALAPPDATA\JetBrains\Toolbox\apps\android-studio*\jbr",
+            "$env:ProgramFiles\Eclipse Adoptium\jdk-*",
+            "$env:ProgramFiles\Microsoft\jdk-*",
+            "$env:ProgramFiles\Java\jdk-*"
+        )
+        $j = $cands | ForEach-Object { Get-Item $_ -ErrorAction SilentlyContinue } |
+            Where-Object { Test-Path (Join-Path $_ 'bin\java.exe') } | Select-Object -First 1
+        if (-not $j) {
+            $c = Get-Command java -ErrorAction SilentlyContinue
+            if ($c) { $j = Split-Path (Split-Path $c.Source) }
         }
+        if ($j) { $env:JAVA_HOME = "$j" }
     }
-    if (-not $env:JAVA_HOME) { throw 'Java bulunamadı. JAVA_HOME ayarlayın (Android Studio\jbr).' }
+    if (-not $env:JAVA_HOME) { throw 'Java 17 bulunamadı. JAVA_HOME ayarlayın.' }
     $env:PATH = (Join-Path $env:JAVA_HOME 'bin') + ';' + $env:PATH
     Write-Host "SDK: $Sdk"; Write-Host "NDK: $env:ANDROID_NDK_HOME"; Write-Host "Java: $env:JAVA_HOME"
 
