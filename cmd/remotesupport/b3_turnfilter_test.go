@@ -11,7 +11,7 @@ func TestKeepTURN(t *testing.T) {
 	_, lan, _ := net.ParseCIDR("192.168.1.10/24")
 	local := []*net.IPNet{lan}
 	cases := map[string]bool{
-		"turn:198.51.100.10:3478?transport=udp": true,
+		"turn:140.238.143.54:3478?transport=udp": true,
 		"turn:10.0.0.39:3478":                    false,
 		"turn:192.168.1.5:3478":                  true,
 		"turns:turn.example.com:443":             true,

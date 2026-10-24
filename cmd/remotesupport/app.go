@@ -159,6 +159,7 @@ func main() {
 	updateWindow.Call(hwnd)
 
 	startDeviceMode() // if enabled in settings, register and wait for technicians
+	startUpdateWatcher()
 
 	var m msg
 	for {

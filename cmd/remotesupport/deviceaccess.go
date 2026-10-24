@@ -10,6 +10,7 @@ import (
 	"time"
 
 	clientsignaling "github.com/eirahoutmoss/remotesupport/client/signaling"
+	"github.com/pion/webrtc/v4"
 )
 
 // deviceModeActive is set while this machine is serving technician access.
@@ -117,9 +118,15 @@ func deviceModeLoop(id, pass string, gen int64) {
 		}
 		// Serve one technician session (blocks until the signaling link drops),
 		// then re-register so the device stays reachable.
+		c.KeepAlive(ctx, signalingKeepAlive) // long idle waits behind NAT/proxies
 		start := time.Now()
-		targetLoop(ctx, c)
+		lost := targetLoop(ctx, c)
 		_ = c.Close(context.Background())
+		if lost {
+			// Signaling dropped but media is peer-to-peer: cancelling ctx now
+			// would stop capture and kill a live session. Wait for it to end.
+			waitSessionEnd(gen)
+		}
 		cancel()
 		if deviceModeGen.Load() != gen {
 			return
@@ -136,6 +143,24 @@ func deviceModeLoop(id, pass string, gen int64) {
 			backoff = baseBackoff
 			sleepGen(backoff, gen)
 		}
+	}
+}
+
+// waitSessionEnd blocks while the current WebRTC session is still alive.
+func waitSessionEnd(gen int64) {
+	logged := false
+	for deviceModeGen.Load() == gen {
+		state.mu.Lock()
+		p := state.peer
+		state.mu.Unlock()
+		if p == nil || !capturing.Load() || p.ConnectionState() == webrtc.PeerConnectionStateFailed || p.ConnectionState() == webrtc.PeerConnectionStateClosed {
+			return
+		}
+		if !logged {
+			netlogf("Cihaz erişimi: sinyal kanalı koptu, etkin oturum bitene kadar bekleniyor")
+			logged = true
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 

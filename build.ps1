@@ -13,19 +13,16 @@ try {
     $env:CGO_ENABLED = '0'
     $env:GOOS = 'windows'
     $env:GOARCH = 'amd64'
-    # Exe ikonu + manifest: assets\nexdesk.ico / nexdesk.manifest -> rsrc_windows_amd64.syso
-    # (go build bunu otomatik gömer). Manifest DPI (gdiScaling) için gerekli.
+    # Exe ikonu: assets\nexdesk.ico -> rsrc_windows_amd64.syso (go build bunu otomatik gömer).
+    # NOT: manifest gömme GERİ ALINDI — bazı Windows sürümlerinde "Bu uygulama
+    # bilgisayarınızda çalışamıyor" hatasına yol açıyordu. Her derlemede kaynak
+    # sıfırdan üretilir ki eski (manifestli) .syso kalmasın.
     $Ico = Join-Path $Root 'cmd\remotesupport\assets\nexdesk.ico'
-    $Manifest = Join-Path $Root 'cmd\remotesupport\assets\nexdesk.manifest'
     $Syso = Join-Path $Root 'cmd\remotesupport\rsrc_windows_amd64.syso'
-    $NeedSyso = -not (Test-Path $Syso) -or `
-        (Get-Item $Ico).LastWriteTime -gt (Get-Item $Syso).LastWriteTime -or `
-        (Get-Item $Manifest).LastWriteTime -gt (Get-Item $Syso).LastWriteTime
-    if ($NeedSyso) {
-        Write-Host 'Generating icon + manifest resource ...'
-        go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico $Ico -manifest $Manifest -o $Syso
-        if ($LASTEXITCODE -ne 0) { throw 'Icon/manifest resource generation failed.' }
-    }
+    Remove-Item $Syso -Force -ErrorAction SilentlyContinue
+    Write-Host 'Generating icon resource ...'
+    go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico $Ico -o $Syso
+    if ($LASTEXITCODE -ne 0) { throw 'Icon resource generation failed.' }
     # -H=windowsgui: GUI alt-sistemi olarak derle; açılışta konsol (DOS) penceresi çıkmasın.
     go build -trimpath -ldflags='-s -w -H=windowsgui' -o (Join-Path $Dist 'NexDesk.exe') './cmd/remotesupport'
     if ($LASTEXITCODE -ne 0) { throw 'NexDesk.exe build failed.' }

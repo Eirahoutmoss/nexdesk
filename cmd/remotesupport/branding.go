@@ -372,4 +372,4 @@ func isLocalEndpoint(ws string) bool {
 }
 
 // appVersion is shown in the UI and sent to the signaling server for its logs.
-const appVersion = "1.2.0"
+const appVersion = "1.3.0"

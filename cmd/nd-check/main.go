@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	ws := flag.String("ws", "wss://SUNUCU_IP:8443/v1/ws#pin=PIN", "signaling adresi")
+	ws := flag.String("ws", "wss://140.238.143.54:8443/v1/ws#pin=av3ksnpgP8LbmOo2nQZwqRpD0JuaM4Q_9yDmEO4Wpaw", "signaling adresi")
 	flag.Parse()
 	fmt.Println("NexDesk bağlantı tanısı —", time.Now().Format("2006-01-02 15:04:05"))
 	creds := signalingStep(*ws)

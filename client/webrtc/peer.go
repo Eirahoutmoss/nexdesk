@@ -127,6 +127,10 @@ func (p *Peer) ConnectionState() webrtc.PeerConnectionState {
 	return p.pc.ConnectionState()
 }
 
+// HasRemote reports whether a remote description was already applied. A
+// PeerConnection that negotiated once cannot take a fresh peer's offer.
+func (p *Peer) HasRemote() bool { return p.pc.RemoteDescription() != nil }
+
 // ICEState reports the ICE connection state (diagnostics).
 func (p *Peer) ICEState() webrtc.ICEConnectionState {
 	return p.pc.ICEConnectionState()
@@ -505,16 +509,25 @@ func (p *Peer) Close() error {
 	return p.pc.Close()
 }
 
+// maxGatherWait caps non-trickle gathering. An unreachable STUN/TURN server
+// can hold gathering open for a long time; past this point the description is
+// sent with the candidates found so far (host/srflx/relay that did answer).
+var maxGatherWait = 10 * time.Second
+
 func waitICE(ctx context.Context, pc *webrtc.PeerConnection) error {
 	if pc.ICEGatheringState() == webrtc.ICEGatheringStateComplete {
 		return nil
 	}
 	t := time.NewTicker(10 * time.Millisecond)
 	defer t.Stop()
+	limit := time.NewTimer(maxGatherWait)
+	defer limit.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-limit.C:
+			return nil
 		case <-t.C:
 			if pc.ICEGatheringState() == webrtc.ICEGatheringStateComplete {
 				return nil
