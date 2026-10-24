@@ -1,5 +1,6 @@
 package com.eirahoutmoss.nexdesk.app
 
+import android.content.Intent
 import android.graphics.Paint
 import android.graphics.RectF
 import android.os.Bundle
@@ -64,16 +65,29 @@ class MainActivity : ComponentActivity() {
     private lateinit var prefs: Prefs
     private lateinit var ctl: RemoteController
     private val update = mutableStateOf<UpdateInfo?>(null)
+    private val pendingLink = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
         ctl = AppHolder.controller(prefs, BuildConfig.VERSION_NAME)
+        takeLink(intent)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF3B82F6), background = Bg, surface = Panel)) {
-                Surface(Modifier.fillMaxSize(), color = Bg) { App(prefs, ctl, update) }
+                Surface(Modifier.fillMaxSize(), color = Bg) { App(prefs, ctl, update, pendingLink) }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        takeLink(intent)
+    }
+
+    /** nexdesk://join?… opened from WhatsApp, mail, a browser… */
+    private fun takeLink(i: Intent?) {
+        val d = i?.dataString ?: return
+        if (d.startsWith("nexdesk://", ignoreCase = true)) pendingLink.value = d
     }
 
     override fun onResume() {
@@ -95,10 +109,31 @@ private val Panel = Color(0xFF111A2E)
 private val Muted = Color(0xFF94A3B8)
 
 @Composable
-fun App(prefs: Prefs, ctl: RemoteController, update: MutableState<UpdateInfo?>) {
+fun App(prefs: Prefs, ctl: RemoteController, update: MutableState<UpdateInfo?>, pendingLink: MutableState<String?>) {
     val phase by ctl.phase
     if (phase == Phase.Idle) HomeScreen(prefs, ctl) else SessionScreen(ctl)
     update.value?.let { UpdateDialog(it) { update.value = null } }
+    pendingLink.value?.let { link ->
+        val code = Nexdesk.linkCode(link).orEmpty()
+        AlertDialog(
+            onDismissRequest = { pendingLink.value = null },
+            title = { Text("Bağlantı linki") },
+            text = {
+                Text(
+                    if (code.isBlank()) "Bu link geçerli bir NexDesk bağlantısı değil."
+                    else if (prefs.techName.isBlank()) "Önce ana ekranda adınızı girin."
+                    else "$code koduna bağlanılsın mı?"
+                )
+            },
+            confirmButton = {
+                TextButton(enabled = code.isNotBlank() && prefs.techName.isNotBlank() && phase == Phase.Idle, onClick = {
+                    pendingLink.value = null
+                    ctl.connectLink(link)
+                }) { Text("Bağlan") }
+            },
+            dismissButton = { TextButton(onClick = { pendingLink.value = null }) { Text("Vazgeç") } }
+        )
+    }
 }
 
 // ---------------------------------------------------------------- home
@@ -113,6 +148,8 @@ fun HomeScreen(prefs: Prefs, ctl: RemoteController) {
     var showSettings by remember { mutableStateOf(false) }
     var manualCheck by remember { mutableStateOf<String?>(null) }
     var manualUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+    var scanError by remember { mutableStateOf<String?>(null) }
+    val ctx = LocalContext.current
     val closed by ctl.closedReason
 
     Scaffold(
@@ -155,6 +192,19 @@ fun HomeScreen(prefs: Prefs, ctl: RemoteController) {
                         enabled = code.length >= 6 && name.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Bağlan") }
+                    OutlinedButton(
+                        onClick = {
+                            scanError = null
+                            scanQr(ctx,
+                                onCode = { raw -> if (!ctl.connectLink(raw)) scanError = "Bu karekod bir NexDesk bağlantısı değil." },
+                                onError = { scanError = it })
+                        },
+                        enabled = name.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text("Karekodu okut")
+                    }
+                    scanError?.let { Text(it, color = Color(0xFFF87171), fontSize = 12.sp) }
                 }
             }
             Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
@@ -329,6 +379,9 @@ fun SessionScreen(ctl: RemoteController) {
     val monitors by ctl.monitors
     var showKeys by remember { mutableStateOf(false) }
     var showChat by remember { mutableStateOf(false) }
+    var showInfo by remember { mutableStateOf(false) }
+    var monMenu by remember { mutableStateOf(false) }
+    val curMon by ctl.currentMonitor
     var kbOpen by remember { mutableStateOf(false) }
     var lastPoint by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
     val focus = remember { FocusRequester() }
@@ -357,17 +410,32 @@ fun SessionScreen(ctl: RemoteController) {
                     kbOpen = !kbOpen
                     if (kbOpen) { focus.requestFocus(); kb?.show() } else kb?.hide()
                 }) { Icon(Icons.Filled.Keyboard, "Klavye") }
-                IconButton(onClick = { showKeys = !showKeys }) { Icon(Icons.Filled.Tune, "Özel tuşlar") }
-                IconButton(onClick = { ctl.mouse("wheel", lastPoint.x.toDouble(), lastPoint.y.toDouble(), 0, 240) }) {
-                    Icon(Icons.Filled.KeyboardArrowUp, "Yukarı kaydır")
-                }
-                IconButton(onClick = { ctl.mouse("wheel", lastPoint.x.toDouble(), lastPoint.y.toDouble(), 0, -240) }) {
-                    Icon(Icons.Filled.KeyboardArrowDown, "Aşağı kaydır")
+                IconButton(onClick = { showKeys = !showKeys }) { Icon(Icons.Filled.Tune, "Özel tuşlar ve kaydırma") }
+                if (monitors > 1) {
+                    Box {
+                        TextButton(onClick = { monMenu = true }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                            Icon(Icons.Filled.DesktopWindows, "Monitör", tint = Color.White)
+                            Text(" ${curMon + 1}/$monitors", color = Color.White, fontSize = 13.sp)
+                        }
+                        DropdownMenu(expanded = monMenu, onDismissRequest = { monMenu = false }) {
+                            (0 until monitors).forEach { i ->
+                                DropdownMenuItem(
+                                    text = { Text("Monitör ${i + 1}" + if (i == curMon) "  ✓" else "") },
+                                    onClick = { monMenu = false; ctl.selectMonitor(i) }
+                                )
+                            }
+                            Text(
+                                "Seçim oturumdaki herkesin görüntüsünü değiştirir.",
+                                color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
                 }
                 IconButton(onClick = { showChat = true }) { Icon(Icons.Filled.Forum, "Sohbet") }
+                IconButton(onClick = { showInfo = true }) { Icon(Icons.Filled.Info, "Bağlantı bilgisi") }
                 IconButton(onClick = { ctl.disconnect() }) { Icon(Icons.Filled.Close, "Bağlantıyı kes", tint = Color(0xFFF87171)) }
             }
-            if (showKeys) KeyBar(ctl, monitors)
+            if (showKeys) KeyBar(ctl, lastPoint)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 RemoteView(ctl) { lastPoint = it }
                 if (phase != Phase.Connected) {
@@ -399,6 +467,36 @@ fun SessionScreen(ctl: RemoteController) {
         )
     }
     if (showChat) ChatDialog(ctl) { showChat = false }
+    if (showInfo) InfoDialog(ctl) { showInfo = false }
+}
+
+@Composable
+fun InfoDialog(ctl: RemoteController, onDismiss: () -> Unit) {
+    var line by remember { mutableStateOf(ctl.stats()) }
+    val sas by ctl.sas
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1000)
+            line = ctl.stats()
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Bağlantı bilgisi") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                line.split("  •  ").forEach { Text(it) }
+                if (sas.isNotBlank()) {
+                    Text("Güvenlik kodu: $sas", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Karşı taraftaki NexDesk ekranında da aynı kod görünmeli. Farklıysa bağlantıyı kesin.",
+                        color = Muted, fontSize = 12.sp
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Kapat") } }
+    )
 }
 
 private fun sendDiff(ctl: RemoteController, old: String, new: String) {
@@ -410,8 +508,10 @@ private fun sendDiff(ctl: RemoteController, old: String, new: String) {
 }
 
 @Composable
-fun KeyBar(ctl: RemoteController, monitors: Int) {
+fun KeyBar(ctl: RemoteController, at: Offset) {
     val keys = listOf(
+        "▲ Kaydır" to { ctl.mouse("wheel", at.x.toDouble(), at.y.toDouble(), 0, 240) },
+        "▼ Kaydır" to { ctl.mouse("wheel", at.x.toDouble(), at.y.toDouble(), 0, -240) },
         "Esc" to { ctl.tap(27) }, "Tab" to { ctl.tap(9) }, "Win" to { ctl.tap(91) },
         "Enter" to { ctl.tap(13) }, "Sil" to { ctl.tap(46) },
         "←" to { ctl.tap(37) }, "↑" to { ctl.tap(38) }, "→" to { ctl.tap(39) }, "↓" to { ctl.tap(40) },
@@ -425,13 +525,6 @@ fun KeyBar(ctl: RemoteController, monitors: Int) {
     ) {
         keys.forEach { (label, act) ->
             OutlinedButton(onClick = { act() }, contentPadding = PaddingValues(horizontal = 10.dp)) { Text(label, fontSize = 13.sp) }
-        }
-        if (monitors > 1) {
-            (0 until monitors).forEach { i ->
-                OutlinedButton(onClick = { ctl.selectMonitor(i) }, contentPadding = PaddingValues(horizontal = 10.dp)) {
-                    Icon(Icons.Filled.DesktopWindows, null, Modifier.size(16.dp)); Text(" ${i + 1}", fontSize = 13.sp)
-                }
-            }
         }
     }
 }

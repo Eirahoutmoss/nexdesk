@@ -45,7 +45,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8: drops unused code (mostly the large icon set); the Go/JNI
+            // classes are kept by proguard-rules.pro.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release")
         }
     }
@@ -71,4 +75,5 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 }

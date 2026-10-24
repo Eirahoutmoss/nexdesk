@@ -175,6 +175,18 @@ func (p *Peer) PathKind() string {
 	return "direct"
 }
 
+// RoundTrip is the current round-trip time of the selected candidate pair
+// (0 until known).
+func (p *Peer) RoundTrip() time.Duration {
+	for _, st := range p.pc.GetStats() {
+		if cp, ok := st.(webrtc.ICECandidatePairStats); ok && cp.Nominated &&
+			cp.State == webrtc.StatsICECandidatePairStateSucceeded && cp.CurrentRoundTripTime > 0 {
+			return time.Duration(cp.CurrentRoundTripTime * float64(time.Second))
+		}
+	}
+	return 0
+}
+
 // FingerprintSAS derives a 6-digit short authentication string from the DTLS
 // certificate fingerprints exchanged in the SDP, salted with the connection
 // code. Both peers sort the two fingerprints before hashing, so an honest

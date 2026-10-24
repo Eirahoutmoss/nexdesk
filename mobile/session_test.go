@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"image"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	clientsignaling "github.com/eirahoutmoss/remotesupport/client/signaling"
 	webrtcpeer "github.com/eirahoutmoss/remotesupport/client/webrtc"
 	server "github.com/eirahoutmoss/remotesupport/server/signaling"
+	"github.com/eirahoutmoss/remotesupport/shared/joinlink"
 	"github.com/eirahoutmoss/remotesupport/shared/protocol"
 	"github.com/eirahoutmoss/remotesupport/shared/tiles"
 	"github.com/pion/webrtc/v4"
@@ -99,8 +101,15 @@ func TestMobileSessionEndToEnd(t *testing.T) {
 
 	r := newRec()
 	ms := NewSession(r)
-	ms.Configure(url, "", "", "", "Telefon", "1.4.0")
-	ms.ConnectCode(code)
+	// No server configured: the QR link alone must carry the signaling URL.
+	ms.Configure("", "", "", "", "Telefon", "1.4.0")
+	ms.sigURL = ""
+	if ms.ConnectLink("not a link") {
+		t.Fatal("garbage accepted as link")
+	}
+	if !ms.ConnectLink(joinlink.Build(code, url)) {
+		t.Fatal("QR link rejected")
+	}
 	defer ms.Disconnect()
 	select {
 	case <-r.connected:
@@ -111,6 +120,9 @@ func TestMobileSessionEndToEnd(t *testing.T) {
 	}
 	select {
 	case f := <-r.frames:
+		if st := ms.Stats(); !strings.Contains(st, "Yol:") {
+			t.Fatalf("stats %q", st)
+		}
 		if f.Width != 640 || f.TileSize != tiles.Size || f.Count != 1 || f.TileX(0) != 3 || f.TileY(0) != 4 {
 			t.Fatalf("frame %+v", f)
 		}
