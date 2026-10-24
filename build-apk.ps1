@@ -65,6 +65,9 @@ try {
     # It links into net internals, hence -checklinkname=0 below (see its README).
     go get github.com/wlynxg/anet@v0.0.5
     if ($LASTEXITCODE -ne 0) { throw 'anet güncellenemedi.' }
+    # go get may leave go.sum without entries the Windows build needs.
+    go mod tidy
+    if ($LASTEXITCODE -ne 0) { throw 'go mod tidy başarısız.' }
 
     # --- built-in server settings (git-ignored, holds the TURN password)
     $local = 'cmd\remotesupport\assets\server-defaults.local.json'
