@@ -10,21 +10,21 @@ package main
 
 import (
 	"bytes"
-	"encoding/binary"
 	"image"
 	"image/draw"
 	"image/jpeg"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/eirahoutmoss/remotesupport/shared/tiles"
 )
 
 const (
-	tileSize     = 64
-	atlasCols    = 16
+	tileSize     = tiles.Size
+	atlasCols    = tiles.Cols
 	keyInterval  = 5 * time.Second
 	deltaMaxPart = 0.6 // above this share of changed tiles a keyframe is cheaper
-	tileMagic    = "NXT1"
 )
 
 type tileEncoder struct {
@@ -97,47 +97,10 @@ func (e *tileEncoder) encode(img *image.RGBA, monitor, quality int) (payload []b
 	return payload, false, nil
 }
 
-// changedTiles compares two equally sized frames tile by tile, row by row.
-func changedTiles(a, b *image.RGBA) []image.Point {
-	w, h := b.Bounds().Dx(), b.Bounds().Dy()
-	tw, th := (w+tileSize-1)/tileSize, (h+tileSize-1)/tileSize
-	var out []image.Point
-	for ty := 0; ty < th; ty++ {
-		y0, y1 := ty*tileSize, min((ty+1)*tileSize, h)
-		for tx := 0; tx < tw; tx++ {
-			x0, x1 := tx*tileSize*4, min((tx+1)*tileSize, w)*4
-			for y := y0; y < y1; y++ {
-				ra := a.Pix[y*a.Stride+x0 : y*a.Stride+x1]
-				rb := b.Pix[y*b.Stride+x0 : y*b.Stride+x1]
-				if !bytes.Equal(ra, rb) {
-					out = append(out, image.Pt(tx, ty))
-					break
-				}
-			}
-		}
-	}
-	return out
-}
+// The wire format lives in shared/tiles (also used by the mobile viewer).
+func changedTiles(a, b *image.RGBA) []image.Point { return tiles.Changed(a, b) }
 
-// withTileMeta inserts a COM segment right after SOI:
-// "NXT1" | u16 tileSize | u16 cols | u16 count | count × (u16 tx, u16 ty)
-func withTileMeta(jp []byte, cols int, tiles []image.Point) []byte {
-	meta := make([]byte, 0, 10+4*len(tiles))
-	meta = append(meta, tileMagic...)
-	meta = binary.BigEndian.AppendUint16(meta, tileSize)
-	meta = binary.BigEndian.AppendUint16(meta, uint16(cols))
-	meta = binary.BigEndian.AppendUint16(meta, uint16(len(tiles)))
-	for _, t := range tiles {
-		meta = binary.BigEndian.AppendUint16(meta, uint16(t.X))
-		meta = binary.BigEndian.AppendUint16(meta, uint16(t.Y))
-	}
-	out := make([]byte, 0, len(jp)+len(meta)+4)
-	out = append(out, jp[:2]...) // SOI
-	out = append(out, 0xFF, 0xFE)
-	out = binary.BigEndian.AppendUint16(out, uint16(len(meta)+2))
-	out = append(out, meta...)
-	return append(out, jp[2:]...)
-}
+func withTileMeta(jp []byte, cols int, t []image.Point) []byte { return tiles.WithMeta(jp, cols, t) }
 
 type tileMeta struct {
 	size, cols int
@@ -145,24 +108,8 @@ type tileMeta struct {
 }
 
 func parseTileMeta(jp []byte) (tileMeta, bool) {
-	if len(jp) < 14 || jp[2] != 0xFF || jp[3] != 0xFE {
-		return tileMeta{}, false
-	}
-	l := int(binary.BigEndian.Uint16(jp[4:6]))
-	if l < 2+10 || 4+l > len(jp) || string(jp[6:10]) != tileMagic {
-		return tileMeta{}, false
-	}
-	m := jp[6 : 4+l]
-	tm := tileMeta{size: int(binary.BigEndian.Uint16(m[4:6])), cols: int(binary.BigEndian.Uint16(m[6:8]))}
-	n := int(binary.BigEndian.Uint16(m[8:10]))
-	if tm.size <= 0 || tm.cols <= 0 || len(m) != 10+4*n {
-		return tileMeta{}, false
-	}
-	for i := 0; i < n; i++ {
-		o := 10 + 4*i
-		tm.tiles = append(tm.tiles, image.Pt(int(binary.BigEndian.Uint16(m[o:])), int(binary.BigEndian.Uint16(m[o+2:]))))
-	}
-	return tm, true
+	m, ok := tiles.Parse(jp)
+	return tileMeta{size: m.Size, cols: m.Cols, tiles: m.Tiles}, ok
 }
 
 var keyReqMu sync.Mutex

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/eirahoutmoss/remotesupport/client/capture"
@@ -310,6 +311,36 @@ func handleRemoteInput(peer *webrtcpeer.Peer, raw string) {
 	}
 	if ev.T == "keydown" || ev.T == "keyup" {
 		injectRemoteKey(ev)
+		return
+	}
+	if ev.T == "text" {
+		injectRemoteText(ev.S)
+	}
+}
+
+// injectRemoteText types Unicode text (from a phone keyboard) independent of
+// the target's keyboard layout: KEYEVENTF_UNICODE per UTF-16 unit; newline
+// and tab are sent as real Enter/Tab keys.
+func injectRemoteText(s string) {
+	lastActivityUnix.Store(time.Now().Unix())
+	const keyUnicode = 0x0004
+	for _, r := range s {
+		switch r {
+		case '\n':
+			injectRemoteKey(protocol.InputEvent{T: "keydown", K: 0x0D})
+			injectRemoteKey(protocol.InputEvent{T: "keyup", K: 0x0D})
+			continue
+		case '\t':
+			injectRemoteKey(protocol.InputEvent{T: "keydown", K: 0x09})
+			injectRemoteKey(protocol.InputEvent{T: "keyup", K: 0x09})
+			continue
+		}
+		for _, u := range utf16.Encode([]rune{r}) {
+			for _, up := range []uint32{0, keyUp} {
+				in := winKeyInput{Type: inputKeyboard, Ki: winKeyboardInput{Scan: u, Flags: keyUnicode | up}}
+				_, _, _ = sendInput.Call(1, uintptr(unsafe.Pointer(&in)), uintptr(unsafe.Sizeof(in)))
+			}
+		}
 	}
 }
 

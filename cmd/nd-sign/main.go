@@ -34,7 +34,7 @@ func main() {
 	case "keygen":
 		fs := flag.NewFlagSet("keygen", flag.ExitOnError)
 		key := fs.String("key", defaultKey(), "özel anahtar dosyası")
-		out := fs.String("pub", "", "genel anahtarın yazılacağı dosya (ör. cmd/remotesupport/assets/update-pubkey.txt)")
+		out := fs.String("pub", "", "genel anahtarın yazılacağı dosya (ör. shared/update/update-pubkey.txt)")
 		fs.Parse(os.Args[2:])
 		check(keygen(*key, *out))
 	case "sign":

@@ -10,7 +10,6 @@ package main
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"fmt"
 	"net/http"
@@ -26,8 +25,7 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-//go:embed assets/update-pubkey.txt
-var updatePubKey string
+var updatePubKey = update.DefaultPublicKey
 
 const (
 	updateExeName      = "NexDesk.exe"
