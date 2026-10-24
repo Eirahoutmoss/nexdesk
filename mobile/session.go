@@ -22,6 +22,7 @@ import (
 	clientsignaling "github.com/eirahoutmoss/remotesupport/client/signaling"
 	webrtcpeer "github.com/eirahoutmoss/remotesupport/client/webrtc"
 	signaling "github.com/eirahoutmoss/remotesupport/server/signaling"
+	"github.com/eirahoutmoss/remotesupport/shared/joinlink"
 	"github.com/eirahoutmoss/remotesupport/shared/protocol"
 	"github.com/eirahoutmoss/remotesupport/shared/tiles"
 	"github.com/pion/ice/v4"
@@ -110,6 +111,14 @@ type Session struct {
 	stopped bool
 	ever    bool
 	recon   bool
+	linkWS  string // signaling URL from a scanned QR / link (this connect only)
+
+	statMu    sync.Mutex
+	frames    int64
+	bytes     int64
+	statAt    time.Time
+	statFrame int64
+	statBytes int64
 }
 
 func NewSession(l Listener) *Session { return &Session{l: l} }
@@ -131,7 +140,26 @@ func (s *Session) Configure(signalingURL, turnURL, turnUser, turnPass, name, app
 // ConnectCode joins a one-time support code (asynchronous; watch the listener).
 func (s *Session) ConnectCode(code string) {
 	code = strings.ReplaceAll(strings.TrimSpace(code), " ", "")
+	s.linkWS = ""
 	go s.run(code, "", "")
+}
+
+// ConnectLink joins from a scanned QR code, a nexdesk://join link or an
+// internet code. Returns false (and does nothing) when s is not one of them.
+func (s *Session) ConnectLink(link string) bool {
+	code, ws := joinlink.Parse(link)
+	if code == "" {
+		return false
+	}
+	s.linkWS = ws
+	go s.run(code, "", "")
+	return true
+}
+
+// LinkCode returns the session code inside a QR/link ("" if none).
+func LinkCode(link string) string {
+	code, _ := joinlink.Parse(link)
+	return code
 }
 
 // ConnectDevice joins a registered device by id + password.
@@ -145,7 +173,11 @@ func (s *Session) run(code, deviceID, pass string) {
 			s.l.OnClosed(fmt.Sprintf("İç hata: %v", r))
 		}
 	}()
-	if s.sigURL == "" {
+	sigURL := s.sigURL
+	if s.linkWS != "" {
+		sigURL = s.linkWS
+	}
+	if sigURL == "" {
 		s.l.OnClosed("Sunucu adresi tanımlı değil (Ayarlar).")
 		return
 	}
@@ -157,7 +189,7 @@ func (s *Session) run(code, deviceID, pass string) {
 
 	s.l.OnStatus("Sunucuya bağlanılıyor…")
 	dctx, dcancel := context.WithTimeout(ctx, 15*time.Second)
-	c, err := clientsignaling.Dial(dctx, s.sigURL)
+	c, err := clientsignaling.Dial(dctx, sigURL)
 	if err != nil {
 		dcancel()
 		s.l.OnClosed(errorText(err))
@@ -407,6 +439,10 @@ func (s *Session) helloName() string {
 }
 
 func (s *Session) onFrame(fr screen.Frame) {
+	s.statMu.Lock()
+	s.frames++
+	s.bytes += int64(len(fr.JPEG))
+	s.statMu.Unlock()
 	f := &Frame{Monitor: int(fr.Monitor), Width: int(fr.Width), Height: int(fr.Height), JPEG: fr.JPEG}
 	if m, ok := tiles.Parse(fr.JPEG); ok {
 		f.TileSize, f.Cols, f.Count = m.Size, m.Cols, len(m.Tiles)
@@ -557,6 +593,35 @@ func (s *Session) Disconnect() {
 	if cancel != nil {
 		cancel()
 	}
+}
+
+// Stats is a one-line connection summary for the info panel:
+// path, round trip, frame rate and incoming screen data rate.
+func (s *Session) Stats() string {
+	p := s.currentPeer()
+	if p == nil {
+		return "Bağlı değil"
+	}
+	path := map[string]string{"direct": "doğrudan", "relay": "sunucu aktarmalı (TURN)"}[p.PathKind()]
+	if path == "" {
+		path = "belirleniyor"
+	}
+	parts := []string{"Yol: " + path}
+	if rtt := p.RoundTrip(); rtt > 0 {
+		parts = append(parts, fmt.Sprintf("Gecikme: %d ms", rtt.Milliseconds()))
+	}
+	s.statMu.Lock()
+	now := time.Now()
+	if !s.statAt.IsZero() {
+		if dt := now.Sub(s.statAt).Seconds(); dt > 0.2 {
+			fps := float64(s.frames-s.statFrame) / dt
+			kbs := float64(s.bytes-s.statBytes) / dt / 1024
+			parts = append(parts, fmt.Sprintf("Kare: %.0f/sn", fps), fmt.Sprintf("Veri: %.0f KB/sn", kbs))
+		}
+	}
+	s.statAt, s.statFrame, s.statBytes = now, s.frames, s.bytes
+	s.statMu.Unlock()
+	return strings.Join(parts, "  •  ")
 }
 
 func (s *Session) currentPeer() *webrtcpeer.Peer {

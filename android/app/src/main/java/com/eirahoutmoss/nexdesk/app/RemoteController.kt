@@ -33,6 +33,7 @@ class RemoteController(private val prefs: Prefs, private val appVersion: String)
     val roster = mutableStateOf("")
     val inputBy = mutableStateOf("")
     val monitors = mutableIntStateOf(0)
+    val currentMonitor = mutableIntStateOf(0)
     val chat = mutableStateListOf<String>()
     val frameTick = mutableIntStateOf(0)
     var title: String = ""
@@ -60,6 +61,7 @@ class RemoteController(private val prefs: Prefs, private val appVersion: String)
         closedReason.value = null
         path.value = ""; sas.value = ""; roster.value = ""; inputBy.value = ""
         monitors.intValue = 0
+        currentMonitor.intValue = 0
         chat.clear()
         synchronized(lock) { bitmap = null }
     }
@@ -68,6 +70,17 @@ class RemoteController(private val prefs: Prefs, private val appVersion: String)
         title = code
         newSession().connectCode(code)
     }
+
+    /** QR code / nexdesk:// link / internet code. False when not recognised. */
+    fun connectLink(link: String): Boolean {
+        val code = Nexdesk.linkCode(link)
+        if (code.isNullOrBlank()) return false
+        title = code
+        return newSession().connectLink(link)
+    }
+
+    /** One-line path/latency/frame-rate summary (call about once a second). */
+    fun stats(): String = session?.stats() ?: "Bağlı değil"
 
     fun connectDevice(id: String, pass: String, label: String) {
         title = label.ifBlank { id }
@@ -175,6 +188,10 @@ class RemoteController(private val prefs: Prefs, private val appVersion: String)
             }
             return
         }
-        main.post { frameTick.intValue++ }
+        val mon = f.getMonitor().toInt()
+        main.post {
+            frameTick.intValue++
+            if (currentMonitor.intValue != mon) currentMonitor.intValue = mon
+        }
     }
 }

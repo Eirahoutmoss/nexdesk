@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/eirahoutmoss/remotesupport/shared/joinlink"
 	"image/png"
 	"net"
 	"net/url"
@@ -251,19 +252,7 @@ func buildJoinLink(code string) string {
 
 // parseJoinInput accepts either a raw numeric code or a nexdesk://join link and
 // returns the code plus an optional ws endpoint override.
-func parseJoinInput(s string) (code, ws string) {
-	s = strings.TrimSpace(s)
-	if ws, code, ok := decodeInternetCode(s); ok {
-		return code, ws
-	}
-	if strings.HasPrefix(strings.ToLower(s), "nexdesk://") {
-		if u, err := url.Parse(s); err == nil {
-			q := u.Query()
-			return normalizeCode(q.Get("code")), strings.TrimSpace(q.Get("ws"))
-		}
-	}
-	return normalizeCode(s), ""
-}
+func parseJoinInput(s string) (code, ws string) { return joinlink.Parse(s) }
 
 var opEndpointMu sync.Mutex
 var opEndpointOverride string
@@ -372,4 +361,4 @@ func isLocalEndpoint(ws string) bool {
 }
 
 // appVersion is shown in the UI and sent to the signaling server for its logs.
-const appVersion = "1.4.0"
+const appVersion = "1.4.1"
