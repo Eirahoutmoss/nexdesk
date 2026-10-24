@@ -61,9 +61,9 @@ func repaintAbout() {
 	}
 }
 
-// checkForUpdates does a short signaling handshake (dial → create → read the
-// advisory → close) to fetch the server's latest-version info on demand. The
-// throwaway code is dropped when the connection closes, so nothing lingers.
+// checkForUpdates (Hakkında → "Güncellemeleri Kontrol Et") asks GitHub for
+// the newest release and offers to install it. If GitHub cannot be reached it
+// falls back to the signaling server's version advisory.
 func checkForUpdates() {
 	updateStatusMu.Lock()
 	if updateChecking {
@@ -82,25 +82,33 @@ func checkForUpdates() {
 		}()
 		setUpdateStatus("Kontrol ediliyor…")
 		repaintAbout()
-
-		ep := signalingEndpoint()
-		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		defer cancel()
-		c, err := clientsignaling.Dial(ctx, ep)
-		if err != nil {
-			setUpdateStatus("Kontrol edilemedi — sunucuya ulaşılamadı.")
+		if rel, err := latestRelease(); err == nil || rel != nil {
+			offerUpdate(rel, true)
 			repaintAbout()
 			return
+		} else {
+			netlogf("GitHub sürüm kontrolü başarısız: %v", err)
 		}
-		c.App = appVersion
-		if _, _, err := c.Create(ctx); err != nil {
-			_ = c.Close(context.Background())
-			setUpdateStatus("Kontrol edilemedi.")
-			repaintAbout()
-			return
-		}
-		setUpdateStatusFromAdvisory(c.MinApp, c.LatestApp)
-		_ = c.Close(context.Background())
+		checkServerAdvisory()
 		repaintAbout()
 	}()
+}
+
+func checkServerAdvisory() {
+	ep := signalingEndpoint()
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	c, err := clientsignaling.Dial(ctx, ep)
+	if err != nil {
+		setUpdateStatus("Kontrol edilemedi — GitHub'a ve sunucuya ulaşılamadı.")
+		return
+	}
+	c.App = appVersion
+	if _, _, err := c.Create(ctx); err != nil {
+		_ = c.Close(context.Background())
+		setUpdateStatus("Kontrol edilemedi.")
+		return
+	}
+	setUpdateStatusFromAdvisory(c.MinApp, c.LatestApp)
+	_ = c.Close(context.Background())
 }

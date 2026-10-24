@@ -1,0 +1,17 @@
+# Derleme çıktıları
+dist/
+*.exe
+sunucu/nexdesk-signaling
+
+# Gizli bilgiler — ASLA gönderme
+*.local.json
+*.key
+*.key.pub
+
+# Yerel yedekler
+yedekler/
+*.bak*
+gitupload/
+
+# Günlükler
+*.log

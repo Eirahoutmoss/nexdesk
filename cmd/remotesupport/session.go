@@ -230,11 +230,15 @@ func startTarget() {
 	go targetLoop(ctx, c)
 }
 
-func targetLoop(ctx context.Context, c *clientsignaling.Client) {
+// targetLoop serves the signaling channel on the target side. It returns
+// true when the channel was lost (read error) rather than closed on purpose,
+// so a caller can keep a still-live WebRTC session running.
+func targetLoop(ctx context.Context, c *clientsignaling.Client) (lost bool) {
 	defer logCrash("targetLoop")
 	for {
 		msg, err := c.Read(ctx)
 		if err != nil {
+			lost = true
 			switch {
 			case everConnected.Load():
 				// Media flows peer-to-peer over WebRTC; the signaling socket is
@@ -247,7 +251,7 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 			default:
 				setStatus("● Bağlantı kapandı.")
 			}
-			return
+			return lost
 		}
 
 		switch msg.Type {
@@ -260,7 +264,7 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 			ok := askApproval(msg.Code, msg.Name, msg.From)
 			if err := c.Approve(ctx, ok, ""); err != nil {
 				setStatus("● Onay gönderilemedi: " + err.Error())
-				return
+				return false
 			}
 			if ok && c.HasFeature(signaling.FeatureTURNCred) {
 				// v2 server: the per-session TURN credential arrives right
@@ -271,7 +275,7 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 				if ierr != nil || im.Type != "ice" {
 					netlogf("TURN kimliği beklenirken: tip=%q hata=%v", im.Type, ierr)
 					setStatus("● Sunucudan TURN kimliği alınamadı.")
-					return
+					return false
 				}
 				setSessionTURN(im.ICE)
 			}
@@ -284,7 +288,7 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 			peer, err := newPeer(ctx, c, true)
 			if err != nil {
 				setStatus("● WebRTC başlatılamadı: " + err.Error())
-				return
+				return false
 			}
 			state.mu.Lock()
 			state.peer = peer
@@ -307,7 +311,11 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 			sig := webrtcpeer.Signal{Kind: msg.Kind, Payload: msg.Payload}
 			switch sig.Kind {
 			case "offer":
-				if p == nil || peerDead(p) {
+				// A second offer always comes from a NEW operator-side peer
+				// (auto-reconnect). Our side may still look connected (loss is
+				// often detected on one end first), so any peer that already
+				// negotiated is replaced instead of fed a foreign offer.
+				if p == nil || peerDead(p) || p.HasRemote() {
 					p = targetRebuild(ctx, c)
 					if p == nil {
 						continue
@@ -315,12 +323,14 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 				}
 				answer, err := p.AcceptOffer(ctx, sig)
 				if err != nil {
-					setStatus("● Teklif işlenemedi: " + err.Error())
-					return
+					// Keep the signaling loop alive: the operator retries.
+					netlogf("Teklif işlenemedi: %v", err)
+					setStatus("● Teklif işlenemedi, karşı tarafın yeniden denemesi bekleniyor: " + err.Error())
+					continue
 				}
 				if err := c.Signal(ctx, answer.Kind, answer.Payload); err != nil {
 					setStatus("● Cevap gönderilemedi: " + err.Error())
-					return
+					return true
 				}
 			case "candidate":
 				if p == nil {
@@ -332,7 +342,7 @@ func targetLoop(ctx context.Context, c *clientsignaling.Client) {
 			}
 		case "closed":
 			setStatus("Bağlantı sonlandırıldı.")
-			return
+			return false
 		}
 	}
 }
@@ -518,8 +528,16 @@ func watchPeer(peer *webrtcpeer.Peer) {
 	defer ticker.Stop()
 
 	announced := false
+	var discSince time.Time // start of the current Disconnected spell
 	for range ticker.C {
 		st := peer.ConnectionState()
+		if st != webrtc.PeerConnectionStateDisconnected && !discSince.IsZero() {
+			discSince = time.Time{}
+			if st == webrtc.PeerConnectionStateConnected && announced {
+				netlogf("Bağlantı kendiliğinden toparlandı")
+				setStatus("● BAĞLANDI  •  Güvenli WebRTC bağlantısı aktif")
+			}
+		}
 		switch st {
 		case webrtc.PeerConnectionStateConnected:
 			if announced {
@@ -559,7 +577,29 @@ func watchPeer(peer *webrtcpeer.Peer) {
 			auditLog("Bağlandı: " + recRole)
 			setStatus("● BAĞLANDI  •  Güvenli WebRTC bağlantısı aktif")
 			_ = peer.SendPing()
-		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateDisconnected:
+		case webrtc.PeerConnectionStateDisconnected:
+			// ICE reports Disconnected after a few seconds without traffic and
+			// often recovers by itself (Wi-Fi roam, short loss). Tearing the
+			// peer down at once turned every blip into a full reconnect.
+			if discSince.IsZero() {
+				discSince = time.Now()
+				if announced {
+					netlogf("Bağlantı kesintisi algılandı, toparlanması bekleniyor")
+					setStatus("● Bağlantı zayıfladı — toparlanması bekleniyor…")
+				}
+				continue
+			}
+			if time.Since(discSince) < disconnectGrace {
+				continue
+			}
+			fallthrough
+		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
+			state.mu.Lock()
+			current := state.peer == peer
+			state.mu.Unlock()
+			if !current {
+				return // replaced by a reconnect/handover; the new peer has its own watcher
+			}
 			if announced {
 				onPeerDropped(state.mode)
 			} else {
@@ -899,6 +939,10 @@ func describeRequester(name, from string) string {
 // signalingKeepAlive is the WebSocket ping interval; well under the 60–300 s
 // idle timeouts typical of NAT gateways and proxies.
 const signalingKeepAlive = 25 * time.Second
+
+// disconnectGrace is how long a Disconnected peer may recover on its own
+// before it is treated as dropped (pion moves to Failed only after ~25 s).
+const disconnectGrace = 6 * time.Second
 
 // ---- device access (technician → registered device) ----
 

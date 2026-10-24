@@ -35,6 +35,7 @@ const (
 	defaultJoinFails   = 8
 	defaultCreates     = 20 // code creations per IP per rate window
 	defaultTURNTTL     = 12 * time.Hour
+	maxMessageBytes    = 256 << 10
 	maxNameRunes       = 64
 )
 
@@ -313,6 +314,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
+	// Non-trickle SDP carries every candidate; the 32 KiB default can be hit
+	// on machines with many adapters, which closes the socket mid-handshake.
+	conn.SetReadLimit(maxMessageBytes)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -372,7 +376,7 @@ func (s *Server) handleCreate(ctx context.Context, conn *websocket.Conn, first M
 
 	minApp, latestApp := s.appVers()
 	if err := s.write(conn, Message{Type: "created", Code: code, Role: RoleTarget, ExpiresIn: int(ttl.Seconds()), V: ProtocolVersion, Features: feats, MinApp: minApp, LatestApp: latestApp}); err != nil {
-		s.remove(code)
+		s.removeOwned(code, conn)
 		return
 	}
 
@@ -385,7 +389,7 @@ func (s *Server) targetReadLoop(ctx context.Context, conn *websocket.Conn, code 
 	for {
 		var msg Message
 		if err := wsjson.Read(ctx, conn, &msg); err != nil {
-			s.remove(code)
+			s.removeOwned(code, conn)
 			return
 		}
 		switch msg.Type {
@@ -425,7 +429,7 @@ func (s *Server) handleDeviceCreate(ctx context.Context, conn *websocket.Conn, f
 
 	minApp, latestApp := s.appVers()
 	if err := s.write(conn, Message{Type: "created", Code: first.DeviceID, Role: RoleTarget, V: ProtocolVersion, Features: feats, MinApp: minApp, LatestApp: latestApp}); err != nil {
-		s.remove(key)
+		s.removeOwned(key, conn)
 		return
 	}
 	s.targetReadLoop(ctx, conn, key)
@@ -538,18 +542,18 @@ func (s *Server) handleJoin(ctx context.Context, conn *websocket.Conn, code, ip 
 
 	minApp, latestApp := s.appVers()
 	if err := s.write(conn, Message{Type: "joined", Code: code, Role: RoleOperator, V: ProtocolVersion, Features: feats, MinApp: minApp, LatestApp: latestApp}); err != nil {
-		s.remove(code)
+		s.removeOwned(code, conn)
 		return
 	}
 	if err := s.write(target, Message{Type: "peer_joined", Code: code, Name: name, From: ip, V: first.V}); err != nil {
-		s.remove(code)
+		s.removeOwned(code, conn)
 		return
 	}
 
 	for {
 		var msg Message
 		if err := wsjson.Read(ctx, conn, &msg); err != nil {
-			s.remove(code)
+			s.removeOwned(code, conn)
 			return
 		}
 		switch msg.Type {
@@ -643,6 +647,25 @@ func (s *Server) forward(code string, from Role, msg Message) {
 	if closeSession {
 		s.closePeers(sess)
 	}
+}
+
+// removeOwned removes the session only while conn still belongs to it. A
+// re-registered device replaces its session under the same key; when the old
+// socket's read loop then fails it must not tear down the new session.
+func (s *Server) removeOwned(code string, conn *websocket.Conn) {
+	s.mu.Lock()
+	sess := s.sessions[code]
+	if sess == nil || !sess.owns(conn) {
+		s.mu.Unlock()
+		return
+	}
+	delete(s.sessions, code)
+	s.mu.Unlock()
+	s.closePeers(sess)
+}
+
+func (sess *session) owns(conn *websocket.Conn) bool {
+	return (sess.target != nil && sess.target.conn == conn) || (sess.operator != nil && sess.operator.conn == conn)
 }
 
 func (s *Server) remove(code string) {

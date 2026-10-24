@@ -91,6 +91,7 @@ func Dial(ctx context.Context, rawURL string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	conn.SetReadLimit(1 << 20) // full non-trickle SDP can exceed the 32 KiB default
 	return &Client{conn: conn, url: dialURL}, nil
 }
 
@@ -248,10 +249,11 @@ func (c *Client) keepAliveLoop(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			// No wmu here: Ping blocks until the pong arrives (up to 10 s), and
+			// holding the write lock that long stalled offers/candidates.
+			// coder/websocket allows concurrent writers.
 			pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			c.wmu.Lock()
 			err := c.conn.Ping(pctx)
-			c.wmu.Unlock()
 			cancel()
 			if err != nil && (errors.Is(err, net.ErrClosed) || websocket.CloseStatus(err) != -1) {
 				return

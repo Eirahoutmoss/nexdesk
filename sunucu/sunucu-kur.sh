@@ -17,7 +17,7 @@ RELAY_MIN=49160
 RELAY_MAX=49200
 KEEP_PLAIN="${KEEP_PLAIN:-1}"
 MIN_CLIENT_V="${MIN_CLIENT_V:-0}"
-LATEST_APP="${LATEST_APP:-1.2.0}"   # istemcilere "en son sürüm" olarak bildirilir
+LATEST_APP="${LATEST_APP:-1.3.0}"   # istemcilere "en son sürüm" olarak bildirilir
 MIN_APP="${MIN_APP:-}"              # bundan eski istemcilere "güncelle" uyarısı (boş=kapalı)
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
@@ -99,13 +99,18 @@ systemctl restart coturn
 echo "== NexDesk signaling kuruluyor"
 install -m 0755 "$HERE/nexdesk-signaling" /usr/local/bin/nexdesk-signaling
 
+# İç adresli TURN yalnızca sunucuyla aynı iç ağdaki istemciler içindir; bulut
+# sunucuda dışarıdan ulaşılamaz ve aday toplamayı ~8 sn geciktirir. TURN_LAN=1 ile eklenir.
+TURN_URLS="turn:$PUBLIC_IP:$TURN_PORT?transport=udp,turn:$PUBLIC_IP:$TURN_PORT?transport=tcp"
+[ "${TURN_LAN:-0}" = "1" ] && TURN_URLS="$TURN_URLS,turn:$LAN_IP:$TURN_PORT"
 PLAIN_ADDR="0.0.0.0:$SIG_PORT"
 [ "$KEEP_PLAIN" = "0" ] && PLAIN_ADDR="off"
 ( umask 077; cat > /etc/nexdesk/signaling.env <<EOF
 REMOTESUPPORT_SIGNALING_ADDR=$PLAIN_ADDR
 REMOTESUPPORT_TLS_ADDR=0.0.0.0:$TLS_PORT
 REMOTESUPPORT_TURN_SECRET=$TURN_SECRET
-REMOTESUPPORT_TURN_URLS=turn:$PUBLIC_IP:$TURN_PORT?transport=udp,turn:$PUBLIC_IP:$TURN_PORT?transport=tcp,turn:$LAN_IP:$TURN_PORT
+REMOTESUPPORT_TURN_URLS=$TURN_URLS
+REMOTESUPPORT_DEVICE_STORE=/var/lib/nexdesk-signaling/devices.json
 REMOTESUPPORT_TURN_TTL=12h
 REMOTESUPPORT_MIN_CLIENT_V=$MIN_CLIENT_V
 REMOTESUPPORT_LATEST_APP=$LATEST_APP

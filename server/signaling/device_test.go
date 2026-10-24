@@ -3,6 +3,7 @@ package signaling
 import (
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -89,5 +90,38 @@ func TestDevicePersistentSessionNotExpired(t *testing.T) {
 	writeMessage(t, op, Message{Type: "join", DeviceID: "PC-03", Pass: "parolam12"})
 	if got := readMessage(t, op); got.Type != "joined" {
 		t.Fatalf("persistent device expired? got %+v", got)
+	}
+}
+
+// A device that re-registers replaces its session; the old socket's teardown
+// must not remove the new session (it used to, causing a re-register loop).
+func TestDeviceReRegisterKeepsNewSession(t *testing.T) {
+	s := NewServer()
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	old := dialServer(t, ts)
+	writeMessage(t, old, Message{Type: "create", V: ProtocolVersion, DeviceID: "PC-02", Pass: "gizli123"})
+	if got := readMessage(t, old); got.Type != "created" {
+		t.Fatalf("first create: %+v", got)
+	}
+	dev := dialServer(t, ts)
+	defer dev.Close(websocket.StatusNormalClosure, "")
+	writeMessage(t, dev, Message{Type: "create", V: ProtocolVersion, DeviceID: "PC-02", Pass: "gizli123"})
+	if got := readMessage(t, dev); got.Type != "created" {
+		t.Fatalf("second create: %+v", got)
+	}
+	old.Close(websocket.StatusNormalClosure, "")
+	time.Sleep(300 * time.Millisecond) // let the old read loop exit
+
+	op := dialServer(t, ts)
+	defer op.Close(websocket.StatusNormalClosure, "")
+	writeMessage(t, op, Message{Type: "join", V: ProtocolVersion, DeviceID: "PC-02", Pass: "gizli123"})
+	if got := readMessage(t, op); got.Type != "joined" {
+		t.Fatalf("join after re-register: %+v", got)
+	}
+	if pj := readMessage(t, dev); pj.Type != "peer_joined" {
+		t.Fatalf("new device socket peer_joined: %+v", pj)
 	}
 }
