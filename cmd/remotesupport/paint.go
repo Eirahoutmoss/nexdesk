@@ -46,12 +46,12 @@ func paintShell(hdc uintptr) {
 		}
 		paintChatPanel(hdc, computeChatGeom(w, h))
 	case mode == 1:
-		if deviceModeActive.Load() {
+		if deviceModeActive.Load() && !codeSessionActive.Load() {
 			paintPageHeader(hdc, "Cihaz Erişimi", "Teknisyen bağlantısı bekleniyor.")
 			paintCard(hdc, contentX, 322, 782, 120, uiPanelColor, uiBorderColor, 16)
 			paintText(hdc, "DURUM", contentX+24, 344, 300, 16, uiLabelFont, uiAccentColor, txVLeft)
 			paintText(hdc, "● Etkin — teknisyen kimlik ve parola ile bağlanabilir", contentX+24, 366, 740, 24, uiSubtitleFont, uiSuccess, txVLeft)
-			paintText(hdc, "Cihaz kimliği:  "+getActiveCode(), contentX+24, 400, 740, 20, uiBodyFont, uiMutedColor, txVLeft)
+			paintText(hdc, "Cihaz kimliği:  "+effectiveDeviceID(), contentX+24, 400, 740, 20, uiBodyFont, uiMutedColor, txVLeft)
 			break
 		}
 		paintPageHeader(hdc, "Destek Al", "Bu kodu destek verecek kişiye iletin.")

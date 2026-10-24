@@ -403,7 +403,7 @@ func startSessionStats(peer *webrtcpeer.Peer) {
 				setConnInfo(path, "")
 			}
 			if _, sas := getConnInfo(); sas == "" {
-				if v, ok := peer.FingerprintSAS(getActiveCode()); ok {
+				if v, ok := peer.FingerprintSAS(sasKeyFor(peer)); ok {
 					setConnInfo("", v)
 				}
 			}

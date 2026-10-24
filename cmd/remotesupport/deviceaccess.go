@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -67,7 +68,9 @@ func startDeviceMode() {
 	ensureFirewall()
 	startEmbeddedSignaling()
 	gen := deviceModeGen.Add(1)
-	setActiveCode(id)
+	if !codeSessionActive.Load() {
+		setActiveCode(id)
+	}
 	// Run in the background: the app stays on whatever screen the user is on
 	// (Home on launch). A connecting technician triggers the approval dialog
 	// and then the live session view; status reflects it meanwhile.
@@ -116,9 +119,12 @@ func deviceModeLoop(id, pass string, gen int64) {
 			continue
 		}
 		netlogf("Cihaz erişimi çevrimiçi: %s (sunucu=%s)", id, ep)
-		state.mu.Lock()
-		state.ctx, state.cancel, state.sig = ctx, cancel, c
-		state.mu.Unlock()
+		// The device link keeps its own context and socket: a "Destek Al"
+		// code session (state.ctx/state.sig) can run next to it, and ending
+		// that session must not take the device offline.
+		deviceLinkMu.Lock()
+		deviceLinkSig, deviceLinkCancel = c, cancel
+		deviceLinkMu.Unlock()
 		if !capturing.Load() {
 			setStatus("● Cihaz erişimi etkin — bağlantı bekleniyor (kimlik: " + id + ").")
 		}
@@ -168,6 +174,12 @@ func waitSessionEnd(gen int64) {
 	}
 }
 
+var (
+	deviceLinkMu     sync.Mutex
+	deviceLinkSig    *clientsignaling.Client
+	deviceLinkCancel context.CancelFunc
+)
+
 func nextBackoff(cur, max time.Duration) time.Duration {
 	if n := cur * 2; n < max {
 		return n
@@ -194,9 +206,10 @@ func stopDeviceMode() {
 	deviceModeGen.Add(1) // supersede the running loop
 	deviceModeActive.Store(false)
 	releaseDeviceRole()
-	state.mu.Lock()
-	c, cancel := state.sig, state.cancel
-	state.mu.Unlock()
+	deviceLinkMu.Lock()
+	c, cancel := deviceLinkSig, deviceLinkCancel
+	deviceLinkSig, deviceLinkCancel = nil, nil
+	deviceLinkMu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
