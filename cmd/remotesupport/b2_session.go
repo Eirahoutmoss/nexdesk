@@ -59,7 +59,7 @@ var (
 // must never obey them (a hostile "agent" could otherwise lock or drive the
 // technician's PC). operatorOnly is the reverse.
 var agentOnly = []string{"INPUT:", "CURTAIN:", "LOCKINPUT:", "ANNOT:", "ANNOT_CLEAR", "SYSINFO_REQ", "CLIP_REQ", "CLIPONCE:", "REPAIR:", "RESOLUTION:", "MONITOR:", "ADAPT:", "HANDOVER_REQ", "REVERSE:", "REC:", "KEYFRAME"}
-var operatorOnly = []string{"SYSINFO:", "MONITORS:", "REPAIR_RES:", "HANDOVER_CODE:", "HANDOVER_DONE", "HANDOVER_NO", "FRAUD_HOLD:", "MACS:", "SECURE_DESKTOP:", "ADAPT_INFO:"}
+var operatorOnly = []string{"SYSINFO:", "MONITORS:", "REPAIR_RES:", "HANDOVER_CODE:", "HANDOVER_DONE", "HANDOVER_NO", "FRAUD_HOLD:", "MACS:", "SECURE_DESKTOP:", "ADAPT_INFO:", "ROSTER:", "INPUTBY:"}
 
 func hasAnyPrefix(s string, ps []string) bool {
 	for _, p := range ps {
@@ -80,6 +80,9 @@ func handleB2Control(peer *webrtcpeer.Peer, raw string) bool {
 		return true
 	}
 	if agent && strings.HasPrefix(raw, "INPUT:") && fraudHold.Load() {
+		return true
+	}
+	if !agent && handleRosterMsg(raw) {
 		return true
 	}
 	switch {
@@ -138,7 +141,7 @@ func handleB2Control(peer *webrtcpeer.Peer, raw string) bool {
 		}
 		return true
 	case raw == "KEYFRAME":
-		requestKeyframe()
+		requestKeyframeFor(peer)
 		return true
 	case raw == "HANDOVER_REQ":
 		go agentHandover(peer)
@@ -530,6 +533,9 @@ func finishHandover(newPeer *webrtcpeer.Peer) {
 	state.mu.Unlock()
 	_ = old.SendControlText("HANDOVER_DONE")
 	time.Sleep(300 * time.Millisecond)
+	if oldSig != nil {
+		techDropAll(oldSig) // the previous technician leaves the registry too
+	}
 	_ = old.Close()
 	if oldSig != nil {
 		_ = oldSig.Close(context.Background())

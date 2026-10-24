@@ -112,7 +112,7 @@ func saveBookLocked() {
 	sort.Slice(list, func(i, j int) bool { return list[i].LastSeen > list[j].LastSeen })
 	if b, err := json.MarshalIndent(list, "", "  "); err == nil {
 		if p := bookPath(); p != "" {
-			_ = os.WriteFile(p, b, 0600)
+			_ = writeFileAtomic(p, b, 0600)
 		}
 	}
 }

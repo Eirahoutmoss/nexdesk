@@ -86,6 +86,9 @@ func onCommand(id int) {
 		selectMonitor(id - ID_MONITOR_BASE)
 		return
 	}
+	if onTechsCommand(id) {
+		return
+	}
 	switch id {
 	case ID_GET_SUPPORT:
 		supportMode()
@@ -290,6 +293,7 @@ func stopSession() {
 	state.peer = nil
 	state.ctx = nil
 	state.mu.Unlock()
+	techDropAll(nil) // target: every technician's peer and stream
 
 	if cancel != nil {
 		cancel()
@@ -586,7 +590,7 @@ func wndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 		updateMonitorButtons(count)
 		setStatus(fmt.Sprintf("● Uzak bilgisayarda %d monitör bulundu", count))
 		return 0
-	case WM_APP_IDLE:
+	case WM_APP_IDLE, WM_APP_RELAYOUT:
 		layoutUI()
 		invalidateRect.Call(hwnd, 0, 0)
 		return 0

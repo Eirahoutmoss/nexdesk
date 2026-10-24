@@ -23,7 +23,7 @@ func TestV2HandshakeIdentityAndTURN(t *testing.T) {
 	defer target.Close(websocket.StatusNormalClosure, "")
 	writeMessage(t, target, Message{Type: "create", V: ProtocolVersion})
 	created := readMessage(t, target)
-	if created.V != ProtocolVersion || len(created.Features) != 1 || created.Features[0] != FeatureTURNCred {
+	if created.V != ProtocolVersion || !hasFeat(created.Features, FeatureTURNCred) || !hasFeat(created.Features, FeatureMulti) {
 		t.Fatalf("created lacks version/features: %+v", created)
 	}
 
@@ -120,4 +120,13 @@ func TestCleanName(t *testing.T) {
 	if got := CleanName(strings.Repeat("ş", 100)); len([]rune(got)) != maxNameRunes {
 		t.Fatalf("len %d", len([]rune(got)))
 	}
+}
+
+func hasFeat(fs []string, f string) bool {
+	for _, x := range fs {
+		if x == f {
+			return true
+		}
+	}
+	return false
 }

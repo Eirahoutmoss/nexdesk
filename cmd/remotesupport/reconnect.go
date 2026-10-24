@@ -120,26 +120,3 @@ func operatorReconnectLoop() {
 	netlogf("Otomatik yeniden bağlanma BAŞARISIZ")
 	setStatus("● Otomatik yeniden bağlanma başarısız. 'Bağlantıyı Kes' ile kapatıp yeniden deneyin.")
 }
-
-// targetRebuild recreates the target-side peer when a renegotiation offer arrives
-// after a drop (auto-reconnect), mirroring the initial peer_joined setup.
-func targetRebuild(ctx context.Context, c *clientsignaling.Client) *webrtcpeer.Peer {
-	peer, err := newPeer(ctx, c, true)
-	if err != nil {
-		setStatus("● Yeniden bağlantı kurulamadı: " + err.Error())
-		return nil
-	}
-	peer.SetControlHandler(func(msg string) { defer logCrash("control"); handleRemoteInput(peer, msg) })
-	peer.SetFileHandler(func(d []byte) { defer logCrash("file"); handleRemoteFile(d) })
-	state.mu.Lock()
-	old := state.peer
-	state.peer = peer
-	state.mu.Unlock()
-	if old != nil {
-		_ = old.Close()
-	}
-	setStatus("● Karşı taraf yeniden bağlanıyor…")
-	startCapture(peer, ctx)
-	go watchPeer(peer)
-	return peer
-}

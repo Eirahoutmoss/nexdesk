@@ -55,11 +55,16 @@ func currentPeer() *webrtcpeer.Peer {
 	return state.peer
 }
 
+// sendCtl sends a control message to the other side; on a target with
+// several technicians it goes to all of them.
 func sendCtl(msg string) bool {
-	if p := currentPeer(); p != nil {
-		return p.SendControlText(msg) == nil
+	ok := false
+	for _, p := range ctlPeers() {
+		if p.SendControlText(msg) == nil {
+			ok = true
+		}
 	}
-	return false
+	return ok
 }
 
 // handleB1Control consumes Build 1 control messages. It returns true when the

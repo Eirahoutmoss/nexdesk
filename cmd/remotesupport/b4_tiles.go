@@ -37,6 +37,16 @@ type tileEncoder struct {
 // activeTiles is the encoder of the running capture loop.
 var activeTiles atomic.Pointer[tileEncoder]
 
+// requestKeyframeFor makes the next frame of one technician's stream a full
+// one; other technicians' streams are not disturbed.
+func requestKeyframeFor(p any) {
+	if v, ok := tilesByPeer.Load(p); ok {
+		v.(*tileEncoder).forceKey.Store(true)
+		return
+	}
+	requestKeyframe()
+}
+
 // requestKeyframe makes the next frame a full one (new viewer, lost base).
 func requestKeyframe() {
 	if e := activeTiles.Load(); e != nil {

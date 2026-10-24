@@ -84,6 +84,8 @@ func main() {
 	state.stayOpen = createControl(hwnd, "BUTTON", "Açık Kal", 0x00000001, 0, 0, 10, 10, ID_STAY_OPEN)
 	hide(state.stayOpen)
 	state.actionsBtn = createControl(hwnd, "BUTTON", "İşlemler  ▾", 0x00000001, 0, 0, 10, 10, ID_ACTIONS)
+	state.techsBtn = createControl(hwnd, "BUTTON", "Teknisyenler ▾", 0x00000001, 0, 0, 10, 10, ID_TECHS)
+	hide(state.techsBtn)
 	hide(state.actionsBtn)
 	hide(state.fileSend)
 	hide(state.fullscreenButton)
