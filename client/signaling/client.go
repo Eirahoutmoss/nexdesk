@@ -36,6 +36,10 @@ type Client struct {
 	ServerV  int
 	Features []string
 
+	// DeviceOwner is this machine's private owner secret, sent when it
+	// registers as a device; it lets the device change its own password.
+	DeviceOwner string
+
 	// Version advisories from the server (created/joined). Empty when the
 	// server advertises none. Informational — used to nudge the user to update.
 	MinApp    string
@@ -134,7 +138,7 @@ func (c *Client) CreateDevice(ctx context.Context, deviceID, pass string) error 
 	if c.conn == nil {
 		return errors.New("signaling: client closed")
 	}
-	if err := c.writeMsg(ctx, server.Message{Type: "create", V: server.ProtocolVersion, App: c.App, DeviceID: deviceID, Pass: pass}); err != nil {
+	if err := c.writeMsg(ctx, server.Message{Type: "create", V: server.ProtocolVersion, App: c.App, DeviceID: deviceID, Pass: pass, Owner: c.DeviceOwner}); err != nil {
 		return err
 	}
 	var msg server.Message

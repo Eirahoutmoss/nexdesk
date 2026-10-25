@@ -212,7 +212,7 @@ Kodla bağlıyken kaydetme isteği gönderin. Karşı tarafta bir **onay kutusu*
 | **Tarayıcı / iPhone** | Üst çubukta **ⓘ → Bu bilgisayarı kaydet** |
 
 ### Elle kurulum
-1. **Destek alınacak bilgisayarda (Windows):** Sol menü → **Cihaz Erişimi** → **cihaz kimliği** (varsayılan: bilgisayar adı) ve **parola** (en az 4 karakter) → **Kaydet ve Etkinleştir**. Bilgisayar arka planda sunucuya kayıtlı kalır, normal kullanılmaya devam eder.
+1. **Destek alınacak bilgisayarda (Windows):** Sol menü → **Cihaz Erişimi** → **cihaz kimliği** (varsayılan: bilgisayar adı + rastgele ek, ör. `MUHASEBE-7KQ2`; aynı adlı iki bilgisayar çakışmaz) ve **parola** (en az 4 karakter) → **Kaydet ve Etkinleştir**. Bilgisayar arka planda sunucuya kayıtlı kalır, normal kullanılmaya devam eder. Parolayı sonradan değiştirmek serbesttir (sunucu, kimliğin bu bilgisayara ait olduğunu gizli bir sahip anahtarıyla doğrular). Elle girilen kimlik başka bir bilgisayara aitse ekranda kırmızı uyarı çıkar.
 2. **Teknisyen tarafında:**
    - **Windows:** **Destek Ver** → kimlik + parola → **Bağlan**. İlk bağlantıda cihaz **Kayıtlı Cihaz** listesine kendiliğinden eklenir; **Yönet ▾** ile yeniden adlandırılır / silinir.
    - **Android ve tarayıcı / iPhone:** Ana ekran → **Kayıtlı cihazlar → ＋** → kimlik, ad, parola.

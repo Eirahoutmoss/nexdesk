@@ -55,7 +55,11 @@ func saveDeviceAccess() {
 		}
 	}
 	cfg := currentSettings()
+	prevID, prevPass := effectiveDeviceID(), cfg.DevicePass
 	cfg.DeviceAccessOn = on
+	if id == strings.TrimSpace(cfg.DeviceAutoID) {
+		id = "" // keep using (and auto-renewing) the generated default
+	}
 	cfg.DeviceID = id
 	cfg.DevicePass = pass
 	settingsMu.Lock()
@@ -68,8 +72,12 @@ func saveDeviceAccess() {
 	case on && !deviceModeActive.Load():
 		startDeviceMode()
 		setStatus("● Cihaz erişimi etkinleştirildi — teknisyen bağlantısı bekleniyor.")
+	case on && (effectiveDeviceID() != prevID || pass != prevPass) && len(techPeers()) == 0:
+		stopDeviceMode()
+		startDeviceMode()
+		setStatus("● Kaydedildi — cihaz erişimi yeni kimlik/parola ile yeniden başlatıldı.")
 	case on:
-		setStatus("● Kaydedildi. Kimlik/parola değişikliğinin tam uygulanması için programı yeniden başlatın.")
+		setStatus("● Kaydedildi. Kimlik/parola değişikliği bu oturum bitince uygulanacak; gerekirse programı yeniden başlatın.")
 	default:
 		stopDeviceMode()
 		setStatus("● Cihaz erişimi kapatıldı.")

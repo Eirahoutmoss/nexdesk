@@ -97,6 +97,7 @@ type Message struct {
 	// Device access (attended technician support by stable device id + password).
 	DeviceID string `json:"device_id,omitempty"` // create: register/announce; join: target device
 	Pass     string `json:"pass,omitempty"`      // device password (device create, operator join)
+	Owner    string `json:"owner,omitempty"`     // device create: the device's private owner secret
 
 	// v3: operator id on every target-bound/target-sent per-operator message
 	// (peer_joined, ice, signal, approve, peer_left, kick).
@@ -142,6 +143,10 @@ type Server struct {
 type devReg struct {
 	Salt []byte `json:"salt"`
 	Hash []byte `json:"hash"`
+	// Owner is the salted hash of a secret only the device itself holds
+	// (generated on first registration). It lets the device change its own
+	// password; knowing the device id is not enough to take it over.
+	Owner []byte `json:"owner,omitempty"`
 }
 
 type session struct {
@@ -472,7 +477,7 @@ func deviceKey(id string) string { return "DEV-" + strings.ToUpper(strings.TrimS
 // password whenever the device is online.
 func (s *Server) handleDeviceCreate(ctx context.Context, conn *websocket.Conn, first Message, ip string) {
 	key := deviceKey(first.DeviceID)
-	if err := s.authDevice(key, first.Pass, true); err != nil {
+	if err := s.authDeviceOwner(key, first.Pass, first.Owner); err != nil {
 		s.logf("cihaz kaydı reddedildi: %s ip=%s (%v)", key, ip, err)
 		_ = s.write(conn, Message{Type: "error", Reason: err.Error()})
 		return
@@ -499,27 +504,64 @@ func (s *Server) handleDeviceCreate(ctx context.Context, conn *websocket.Conn, f
 // authDevice registers a new device password (register=true) or verifies an
 // existing one. A known device always requires the correct password.
 func (s *Server) authDevice(key, pass string, register bool) error {
+	if register {
+		return s.authDeviceOwner(key, pass, "")
+	}
 	s.devMu.Lock()
 	defer s.devMu.Unlock()
 	reg, ok := s.devices[key]
 	if !ok {
-		if !register {
-			return errors.New("unknown_device")
-		}
-		if len(pass) < 4 {
-			return errors.New("weak_or_missing_password")
-		}
-		salt := make([]byte, 16)
-		if _, err := rand.Read(salt); err != nil {
-			return errors.New("server_error")
-		}
-		s.devices[key] = devReg{Salt: salt, Hash: hashPass(salt, pass)}
-		s.saveDevicesLocked()
-		return nil
+		return errors.New("unknown_device")
 	}
 	if subtle.ConstantTimeCompare(reg.Hash, hashPass(reg.Salt, pass)) != 1 {
 		return errors.New("device_auth_failed")
 	}
+	return nil
+}
+
+// authDeviceOwner registers or re-announces a device. A known device must
+// present its password — or, to change the password, the owner secret it
+// registered with. A device that registered before owner secrets existed
+// adopts one the first time it presents the right password.
+func (s *Server) authDeviceOwner(key, pass, owner string) error {
+	s.devMu.Lock()
+	defer s.devMu.Unlock()
+	if len(pass) < 4 {
+		return errors.New("weak_or_missing_password")
+	}
+	reg, ok := s.devices[key]
+	if !ok {
+		salt := make([]byte, 16)
+		if _, err := rand.Read(salt); err != nil {
+			return errors.New("server_error")
+		}
+		reg = devReg{Salt: salt, Hash: hashPass(salt, pass)}
+		if owner != "" {
+			reg.Owner = hashPass(salt, "owner|"+owner)
+		}
+		s.devices[key] = reg
+		s.saveDevicesLocked()
+		return nil
+	}
+	passOK := subtle.ConstantTimeCompare(reg.Hash, hashPass(reg.Salt, pass)) == 1
+	ownerOK := owner != "" && reg.Owner != nil &&
+		subtle.ConstantTimeCompare(reg.Owner, hashPass(reg.Salt, "owner|"+owner)) == 1
+	switch {
+	case passOK && owner != "" && reg.Owner == nil:
+		reg.Owner = hashPass(reg.Salt, "owner|"+owner) // adopt
+	case passOK:
+		return nil
+	case ownerOK:
+		reg.Hash = hashPass(reg.Salt, pass) // the device changed its password
+		s.logf("cihaz parolası değişti (sahip anahtarıyla): %s", key)
+	case owner != "" && reg.Owner != nil:
+		// Another machine owns this id (e.g. two PCs with the same name).
+		return errors.New("device_id_taken")
+	default:
+		return errors.New("device_auth_failed")
+	}
+	s.devices[key] = reg
+	s.saveDevicesLocked()
 	return nil
 }
 
