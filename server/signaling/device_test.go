@@ -73,6 +73,50 @@ func TestDeviceReRegisterNeedsPassword(t *testing.T) {
 	}
 }
 
+// The owner secret lets a device change its password; without it a new
+// password is refused (someone who only knows the id cannot take over).
+func TestDeviceOwnerChangesPassword(t *testing.T) {
+	s := NewServer()
+	defer s.Close()
+	if err := s.authDeviceOwner("DEV-O", "eskiparola", "sahip-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.authDeviceOwner("DEV-O", "yeniparola", "baskasi"); err == nil || err.Error() != "device_id_taken" {
+		t.Fatalf("other machine: want device_id_taken, got %v", err)
+	}
+	// same password from a reinstalled machine (new owner) is still accepted
+	if err := s.authDeviceOwner("DEV-O", "eskiparola", "baskasi"); err != nil {
+		t.Fatalf("right password, new owner: %v", err)
+	}
+	if err := s.authDeviceOwner("DEV-O", "yeniparola", ""); err == nil || err.Error() != "device_auth_failed" {
+		t.Fatal("no owner changed the password")
+	}
+	if err := s.authDeviceOwner("DEV-O", "yeniparola", "sahip-1"); err != nil {
+		t.Fatalf("owner could not change password: %v", err)
+	}
+	if err := s.authDevice("DEV-O", "yeniparola", false); err != nil {
+		t.Fatalf("technician with new password: %v", err)
+	}
+	if err := s.authDevice("DEV-O", "eskiparola", false); err == nil {
+		t.Fatal("old password still accepted")
+	}
+	// legacy registration (no owner) adopts one with the right password
+	if err := s.authDeviceOwner("DEV-L", "parola1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.authDeviceOwner("DEV-L", "parola1", "sahip-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.authDeviceOwner("DEV-L", "parola2", "sahip-2"); err != nil {
+		t.Fatalf("adopted owner could not change password: %v", err)
+	}
+	// legacy record, wrong password, no owner yet: plain auth failure
+	_ = s.authDeviceOwner("DEV-X", "parola1", "")
+	if err := s.authDeviceOwner("DEV-X", "parola9", "sahip-3"); err == nil || err.Error() != "device_auth_failed" {
+		t.Fatalf("legacy mismatch: want device_auth_failed, got %v", err)
+	}
+}
+
 func TestDevicePersistentSessionNotExpired(t *testing.T) {
 	s := NewServer()
 	defer s.Close()

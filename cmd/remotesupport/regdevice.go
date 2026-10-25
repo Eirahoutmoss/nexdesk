@@ -102,8 +102,8 @@ func armDeviceForTechnician() (id, pass string) {
 	if len(pass) < 4 {
 		pass = randomDevicePass()
 	}
+	cfg = currentSettings() // effectiveDeviceID may have stored an auto id
 	cfg.DeviceAccessOn = true
-	cfg.DeviceID = id
 	cfg.DevicePass = pass
 	settingsMu.Lock()
 	appCfg = cfg

@@ -210,6 +210,13 @@ type appSettings struct {
 	DeviceAccessOn bool   `json:"device_access_on"`
 	DeviceID       string `json:"device_id"`
 	DevicePass     string `json:"device_pass"`
+	// DeviceOwner: random secret proving to the server that this machine
+	// owns its device id (lets it change its password). Never shown or sent
+	// to technicians.
+	DeviceOwner string `json:"device_owner,omitempty"`
+	// DeviceAutoID: generated default id (hostname + random suffix), used
+	// when DeviceID is empty. Regenerated if the server says it is taken.
+	DeviceAutoID string `json:"device_auto_id,omitempty"`
 
 	// ThemePreset: "gece" (Gece Mavisi), "sicak" (Sıcak), "acik" (Aydınlık).
 	// Empty falls back to the default in setThemeVars.
