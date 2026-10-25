@@ -114,6 +114,9 @@ func supportMode() {
 	startEmbeddedSignaling()
 	clearChildren()
 	state.mode = 1
+	// Set before layoutUI: with device access on, layout would otherwise
+	// pick the device-wait screen and hide the code and its buttons.
+	codeSessionActive.Store(true)
 	hide(state.homeGet)
 	hide(state.homeGive)
 
