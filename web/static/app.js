@@ -197,6 +197,13 @@ function openSession(title) {
   try { navigator.wakeLock?.request('screen').then((w) => { S.wake = w; }).catch(() => {}); } catch { /* unsupported */ }
 }
 
+// hangup ends the session on purpose: tell the other side (BYE) so it does
+// not wait for us to come back, then close.
+function hangup() {
+  if (!S.stopped && sendCtl('BYE')) { S.stopped = true; setTimeout(() => end(''), 250); return; }
+  end('');
+}
+
 function end(reason) {
   S.stopped = true;
   clearTimeout(S.discTimer);
@@ -384,6 +391,11 @@ function onControl(raw) {
     flash('Karşı taraf kalıcı kaydı onaylamadı.');
   } else if (raw === 'PING') {
     sendCtl('PONG');
+  } else if (raw === 'BYE' || raw.startsWith('BYE:')) {
+    end('Karşı taraf bağlantıyı kesti.');
+  } else if (raw.startsWith('CAPTURE_FAIL:')) {
+    const r = raw.slice(13);
+    status(r === '0' ? 'Bağlandı' : 'Karşı bilgisayarın ekranı alınamıyor: ' + r);
   } else if (raw.startsWith('SECURE_DESKTOP:')) {
     status(raw.endsWith('1') ? 'Karşı tarafta güvenli masaüstü açık (Ctrl+Alt+Del / UAC / kilit).' : 'Bağlandı');
   }
@@ -814,8 +826,10 @@ function init() {
   $('#code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btnConnect').click(); });
   $('#btnAddDev').onclick = addDevice;
   $('#btnSettings').onclick = settings;
-  $('#ovCancel').onclick = () => end('');
-  $('#tClose').onclick = () => end('');
+  $('#ovCancel').onclick = () => hangup();
+  $('#tClose').onclick = () => hangup();
+  // Closing the tab or app ends the session on purpose too.
+  addEventListener('pagehide', () => { if (!S.stopped) sendCtl('BYE'); });
   $('#tKeys').onclick = () => { show($('#keybar'), $('#keybar').classList.contains('hidden')); setTimeout(resizeView, 0); };
   $('#tKbd').onclick = () => {
     if (document.activeElement === kbd) { kbd.blur(); return; }

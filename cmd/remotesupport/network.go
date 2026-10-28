@@ -60,6 +60,9 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 		tilesByPeer.Store(peer, enc)
 		var seq uint64
 		var cong congestion
+		var capFail captureFailure
+		var busySince time.Time
+		var busyLogged, encLogged, bigLogged bool
 		for {
 			select {
 			case <-ctx.Done():
@@ -71,8 +74,15 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 				busy := !peer.ScreenIdle()
 				cong.tick(peer, busy)
 				if busy {
+					if busySince.IsZero() {
+						busySince = time.Now()
+					} else if !busyLogged && !counted && time.Since(busySince) > 15*time.Second {
+						busyLogged = true
+						netlogf("Ekran kanalı 15 sn'dir dolu, ilk kare gönderilemedi (kanal açık mı / veri akıyor mu?)")
+					}
 					continue // link still busy with the previous frame
 				}
+				busySince = time.Time{}
 				monitor := int(activeMonitor.Load())
 				maxHeight := int(captureMaxHeight.Load())
 				cfg := currentSettings()
@@ -84,17 +94,31 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 				img, err := sharedCapture(monitor, maxHeight)
 				if err != nil {
 					// Ctrl+Alt+Del / UAC / lock screen switch to the secure desktop,
-					// where capture fails. Keep retrying instead of ending the stream.
-					secureDesktopState(peer, true)
+					// where capture fails. Keep retrying instead of ending the stream,
+					// but tell a real failure (wrong session, blocked by security
+					// software) apart from it, log it and tell the technician.
+					capFail.fail(peer, monitor, err)
 					enc.reset()
 					continue
 				}
+				capFail.ok(peer)
 				secureDesktopState(peer, false)
 				payload, skip, err := enc.encode(img, monitor, quality)
-				if skip || err != nil {
+				if err != nil {
+					if !encLogged {
+						encLogged = true
+						netlogf("Ekran kodlanamadı: %v", err)
+					}
+					continue
+				}
+				if skip {
 					continue
 				}
 				if len(payload) > screen.MaxPayloadSize {
+					if !bigLogged {
+						bigLogged = true
+						netlogf("Ekran karesi çok büyük (%d KB > %d KB), atlandı", len(payload)/1024, screen.MaxPayloadSize/1024)
+					}
 					enc.reset()
 					continue
 				}
@@ -114,6 +138,7 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 				if !counted {
 					counted = true
 					activeStreams.Add(1)
+					netlogf("İlk ekran karesi gönderildi: monitör %d, %dx%d, %d KB", monitor+1, img.Bounds().Dx(), img.Bounds().Dy(), len(payload)/1024)
 				}
 				if capturing.CompareAndSwap(false, true) && state.hwnd != 0 {
 					invalidateRect.Call(state.hwnd, 0, 0)
@@ -258,4 +283,58 @@ func discoveryBroadcasts() []net.IP {
 		}
 	}
 	return result
+}
+
+// captureFailure tracks one stream's capture errors: each distinct error is
+// logged once with a session/desktop diagnosis, the secure desktop keeps its
+// own notice, and any other failure lasting a few seconds is reported to the
+// technician instead of leaving them with an empty screen.
+type captureFailure struct {
+	since    time.Time
+	lastErr  string
+	reported bool
+}
+
+const captureFailReportAfter = 3 * time.Second
+
+func (f *captureFailure) fail(peer *webrtcpeer.Peer, monitor int, err error) {
+	d := capture.Diagnose()
+	if f.since.IsZero() {
+		f.since = time.Now()
+	}
+	if msg := err.Error(); msg != f.lastErr {
+		f.lastErr = msg
+		netlogf("Ekran yakalanamadı (monitör %d): %v [%s]", monitor+1, err, d)
+	}
+	if d.SecureDesktop() {
+		secureDesktopState(peer, true)
+		return
+	}
+	if f.reported || time.Since(f.since) < captureFailReportAfter {
+		return
+	}
+	f.reported = true
+	reason := captureFailText(d, err)
+	netlogf("Ekran yakalama başarısız, teknisyene bildirildi: %s", reason)
+	setStatus("● Ekran alınamıyor: " + reason)
+	_ = peer.SendControlText("CAPTURE_FAIL:" + reason)
+}
+
+func (f *captureFailure) ok(peer *webrtcpeer.Peer) {
+	if f.since.IsZero() {
+		return
+	}
+	netlogf("Ekran yakalama düzeldi (%s sonra)", time.Since(f.since).Round(time.Second))
+	if f.reported {
+		_ = peer.SendControlText("CAPTURE_FAIL:0")
+		setStatus("● Ekran paylaşımı devam ediyor.")
+	}
+	*f = captureFailure{}
+}
+
+func captureFailText(d capture.Diagnosis, err error) string {
+	if d.OutsideConsole() {
+		return "NexDesk bilgisayarın ekrandaki oturumunda çalışmıyor (Uzak Masaüstü ile bağlanılmış, kullanıcı değiştirilmiş ya da program hizmet olarak başlatılmış olabilir). Ekrandaki oturumda açın."
+	}
+	return "Windows ekran görüntüsü vermiyor (" + err.Error() + "). Bir güvenlik / veri sızıntısı önleme yazılımı engelliyor olabilir."
 }

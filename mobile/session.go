@@ -496,6 +496,31 @@ func (s *Session) onControl(raw string) {
 		}
 	case raw == "REGDEV_NO":
 		s.l.OnStatus("Karşı taraf kalıcı kaydı onaylamadı.")
+	case raw == "BYE" || strings.HasPrefix(raw, "BYE:"):
+		// The supported computer ended the session on purpose: close without
+		// reconnect attempts and without answering BYE.
+		if s.isStopped() {
+			return
+		}
+		s.mu.Lock()
+		s.stopped = true
+		s.mu.Unlock()
+		go func() {
+			s.l.OnClosed("Karşı taraf bağlantıyı kesti.")
+			s.closeAll()
+		}()
+	case strings.HasPrefix(raw, "CAPTURE_FAIL:"):
+		if reason := strings.TrimPrefix(raw, "CAPTURE_FAIL:"); reason != "0" {
+			s.l.OnStatus("Karşı bilgisayarın ekranı alınamıyor: " + reason)
+		} else {
+			s.l.OnStatus("Karşı bilgisayarın ekranı yeniden alınıyor.")
+		}
+	case strings.HasPrefix(raw, "SECURE_DESKTOP:"):
+		if raw == "SECURE_DESKTOP:1" {
+			s.l.OnStatus("Karşı tarafta Ctrl+Alt+Del / UAC / kilit ekranı açık — kapatılınca görüntü gelir.")
+		} else {
+			s.l.OnStatus("Görüntü devam ediyor.")
+		}
 	case raw == "PING":
 		if p := s.currentPeer(); p != nil {
 			_ = p.SendControlText("PONG")
@@ -603,8 +628,23 @@ func (s *Session) RequestKeyframe() {
 	}
 }
 
-// Disconnect ends this technician's part of the session.
+// Disconnect ends this technician's part of the session and tells the
+// supported computer (BYE) so it does not wait for us to come back.
 func (s *Session) Disconnect() {
+	s.mu.Lock()
+	was := s.stopped
+	s.stopped = true
+	p := s.peer
+	s.mu.Unlock()
+	if !was && p != nil && p.ConnectionState() == webrtc.PeerConnectionStateConnected {
+		if p.SendControlText("BYE") == nil {
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
+	s.closeAll()
+}
+
+func (s *Session) closeAll() {
 	s.mu.Lock()
 	s.stopped = true
 	p, c, cancel := s.peer, s.sig, s.cancel

@@ -273,6 +273,9 @@ func onCommand(id int) {
 }
 
 func stopSession() {
+	if !skipBye.Swap(false) {
+		sendBye(ctlPeers())
+	}
 	b1SessionEnded()
 	userStopped.Store(true)
 	auditLog("Oturum kapatıldı")

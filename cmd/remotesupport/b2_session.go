@@ -41,6 +41,7 @@ const (
 	WM_APP_REVERSE    = 0x8020
 	WM_APP_HANDOVER   = 0x8021
 	WM_APP_FRAUD_ASK  = 0x8022
+	WM_APP_PEER_BYE   = 0x8023
 	wmDropFiles       = 0x0233
 	reverseMonitorTag = 0xFFFF
 )
@@ -59,7 +60,7 @@ var (
 // must never obey them (a hostile "agent" could otherwise lock or drive the
 // technician's PC). operatorOnly is the reverse.
 var agentOnly = []string{"INPUT:", "CURTAIN:", "LOCKINPUT:", "ANNOT:", "ANNOT_CLEAR", "SYSINFO_REQ", "CLIP_REQ", "CLIPONCE:", "REPAIR:", "RESOLUTION:", "MONITOR:", "ADAPT:", "HANDOVER_REQ", "REVERSE:", "REC:", "KEYFRAME"}
-var operatorOnly = []string{"SYSINFO:", "MONITORS:", "REPAIR_RES:", "HANDOVER_CODE:", "HANDOVER_DONE", "HANDOVER_NO", "FRAUD_HOLD:", "MACS:", "SECURE_DESKTOP:", "ADAPT_INFO:", "ROSTER:", "INPUTBY:"}
+var operatorOnly = []string{"SYSINFO:", "MONITORS:", "REPAIR_RES:", "HANDOVER_CODE:", "HANDOVER_DONE", "HANDOVER_NO", "FRAUD_HOLD:", "MACS:", "SECURE_DESKTOP:", "ADAPT_INFO:", "ROSTER:", "INPUTBY:", "CAPTURE_FAIL:"}
 
 func hasAnyPrefix(s string, ps []string) bool {
 	for _, p := range ps {
@@ -104,6 +105,18 @@ func handleB2Control(peer *webrtcpeer.Peer, raw string) bool {
 			setStatus("● Karşı tarafta Ctrl+Alt+Del / UAC / kilit ekranı açık — kullanıcı kapatınca görüntü otomatik devam eder.")
 		} else {
 			setStatus("● Karşı taraf güvenli ekrandan döndü, görüntü devam ediyor.")
+		}
+		return true
+	case raw == "BYE" || strings.HasPrefix(raw, "BYE:"):
+		onPeerBye(peer)
+		return true
+	case strings.HasPrefix(raw, "CAPTURE_FAIL:"):
+		if reason := strings.TrimPrefix(raw, "CAPTURE_FAIL:"); reason != "0" {
+			netlogf("Karşı bilgisayarın ekranı alınamıyor: %s", reason)
+			setStatus("● Karşı bilgisayarın ekranı alınamıyor: " + reason)
+		} else {
+			netlogf("Karşı bilgisayarın ekranı yeniden alınıyor")
+			setStatus("● Karşı bilgisayarın ekranı yeniden alınıyor.")
 		}
 		return true
 	case strings.HasPrefix(raw, "FRAUD_HOLD:"):
@@ -583,7 +596,11 @@ func b2WndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) (uintptr, bool) {
 	case WM_APP_REVERSE:
 		showReverseWindow(wParam != 0)
 		return 0, true
+	case WM_APP_PEER_BYE:
+		endByPeer(wParam == 1)
+		return 0, true
 	case WM_APP_HANDOVER:
+		skipBye.Store(true) // the target stays with the new technician
 		stopSession()
 		home()
 		setStatus("● Oturum yeni teknisyene devredildi; bağlantınız kapatıldı.")

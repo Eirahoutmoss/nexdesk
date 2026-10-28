@@ -10,3 +10,5 @@ func captureMonitorScaled(index int, quality int, maxHeight int) (Frame, error) 
 	return Frame{}, ErrUnsupported
 }
 func captureMonitorImage(index int, maxHeight int) (*image.RGBA, error) { return nil, ErrUnsupported }
+
+func diagnose() Diagnosis { return Diagnosis{} }

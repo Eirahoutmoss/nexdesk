@@ -400,6 +400,10 @@ func kickTech(t *techConn) {
 		return
 	}
 	if t.sig != nil && t.sig.Multi() {
+		techMu.Lock()
+		p := t.peer
+		techMu.Unlock()
+		sendBye([]*webrtcpeer.Peer{p})
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = t.sig.Kick(ctx, t.id)
 		cancel()
