@@ -226,10 +226,16 @@ func onCommand(id int) {
 			}
 		}
 	case ID_SETTINGS:
+		if agentBusy() {
+			return
+		}
 		sidebarPage.Store(2)
 		showSettings()
 		return
 	case ID_ABOUT:
+		if agentBusy() {
+			return
+		}
 		sidebarPage.Store(3)
 		showAbout()
 		return

@@ -24,6 +24,7 @@ import (
 	"unsafe"
 
 	"github.com/eirahoutmoss/remotesupport/client/capture"
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -111,6 +112,11 @@ func wantHomeCode() bool {
 	if !homeCodeWanted.Load() || operatorBusy.Load() {
 		return false
 	}
+	// Never start a new code (it resets session state) while this computer
+	// is being supported.
+	if techCount() > 0 || capturing.Load() {
+		return false
+	}
 	viewer.mu.RLock()
 	active := viewer.active
 	viewer.mu.RUnlock()
@@ -119,10 +125,24 @@ func wantHomeCode() bool {
 
 // startHomeCodeManager keeps the home code alive: creates it, renews it when
 // it expires unused, and recreates it after a session ends.
+// homeCodeMutex: only one NexDesk window per Windows session keeps a code
+// ready on its own. A second copy started by double-click used to make its
+// own codes too (two codes on one computer, renewals in each other's way).
+var homeCodeMutex windows.Handle
+
 func init() {
 	// Decided before the first layout: the first window keeps a code ready,
-	// a "Yeni Oturum" window (technician window) only when asked.
-	homeCodeWanted.Store(os.Getenv("REMOTESUPPORT_NO_DEVICE") == "")
+	// a "Yeni Oturum" or second window (technician window) only when asked.
+	want := os.Getenv("REMOTESUPPORT_NO_DEVICE") == ""
+	if want {
+		name, _ := windows.UTF16PtrFromString(`Local\NexDeskHomeCode`)
+		h, err := windows.CreateMutex(nil, false, name)
+		if err == windows.ERROR_ALREADY_EXISTS {
+			want = false
+		}
+		homeCodeMutex = h
+	}
+	homeCodeWanted.Store(want)
 }
 
 func startHomeCodeManager() {
@@ -788,10 +808,14 @@ func showMainMenu() {
 	}
 	defer destroyMenu.Call(menu)
 	page := sidebarPage.Load()
+	busy := agentBusy()
 	add := func(m uintptr, id int, label string, checked bool) {
 		flags := uintptr(0)
 		if checked {
 			flags |= 0x0008 // MF_CHECKED
+		}
+		if busy && (id == ID_MENU_HOME || id == ID_MENU_BOOK || id == ID_SETTINGS || id == ID_MENU_DEVICE || id == ID_ABOUT || id == ID_MANUAL_OP || id == ID_MANUAL_AGENT) {
+			flags |= 0x0001 // MF_GRAYED: this screen is being shared
 		}
 		appendMenuW.Call(m, flags, uintptr(id), uintptr(unsafe.Pointer(utf16ptr(label))))
 	}
@@ -822,15 +846,21 @@ func onHomeCommand(id int) bool {
 	switch id {
 	case ID_MENU_BUTTON:
 		showMainMenu()
-	case ID_MENU_HOME:
-		sidebarPage.Store(0)
-		home()
-	case ID_MENU_BOOK:
-		sidebarPage.Store(1)
-		showBook()
-	case ID_MENU_DEVICE:
-		sidebarPage.Store(4)
-		showDeviceAccess()
+	case ID_MENU_HOME, ID_MENU_BOOK, ID_MENU_DEVICE:
+		if agentBusy() {
+			return true // pages are locked while this screen is shared
+		}
+		switch id {
+		case ID_MENU_HOME:
+			sidebarPage.Store(0)
+			home()
+		case ID_MENU_BOOK:
+			sidebarPage.Store(1)
+			showBook()
+		default:
+			sidebarPage.Store(4)
+			showDeviceAccess()
+		}
 	case ID_MENU_NEWWIN:
 		launchNewSession()
 	case ID_MENU_THUMBS:
@@ -929,4 +959,15 @@ func showAgentMenu() {
 	if cmd != 0 {
 		onCommand(int(cmd))
 	}
+}
+
+// agentBusy: this computer is being supported right now. Switching pages
+// then changed state.mode, which is also this window's role: the window
+// stopped acting as the supported side (technician input was ignored, the
+// screen looked frozen). Pages are locked until the session ends.
+func agentBusy() bool {
+	state.mu.Lock()
+	mode := state.mode
+	state.mu.Unlock()
+	return mode == 1 && (capturing.Load() || techCount() > 0)
 }
