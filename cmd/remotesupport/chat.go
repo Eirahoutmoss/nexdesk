@@ -17,10 +17,9 @@ import (
 // Shared shell geometry. Child-control layout in layoutUI() and the viewer in
 // resizeViewer() are anchored to these same numbers, so keep them in sync.
 const (
-	navW     = 164
 	headerH  = 86
 	footerH  = 52
-	contentX = 184
+	contentX = 24 // no side rail: pages use the full width (menu is under ☰)
 	gutter   = 24
 )
 

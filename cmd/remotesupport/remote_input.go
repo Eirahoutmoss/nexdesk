@@ -294,6 +294,9 @@ func handleRemoteInput(peer *webrtcpeer.Peer, raw string) {
 	if strings.HasPrefix(raw, "HELLO:") {
 		remoteHost := strings.TrimSpace(strings.TrimPrefix(raw, "HELLO:"))
 		setRemoteHost(remoteHost)
+		if state.mode != 1 {
+			recordRemote(remoteHost) // home screen tile + thumbnail
+		}
 		if state.hwnd != 0 {
 			invalidateRect.Call(state.hwnd, 0, 0)
 		}

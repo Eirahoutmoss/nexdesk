@@ -73,11 +73,11 @@ func resizeViewer() {
 	viewer.mu.RUnlock()
 	if active && !fullscreen.Load() {
 		cg := computeChatGeom(w, ht)
-		vw := w - 190
+		vw := w - contentX - gutter
 		if cg.visible {
-			vw = cg.x - 168 - 12
+			vw = cg.x - contentX - 12
 		}
-		setWindowPos.Call(h, 0, 168, 145, uintptr(maxInt(1, vw)), uintptr(maxInt(1, ht-210)), 0x0004|0x0010)
+		setWindowPos.Call(h, 0, contentX, 150, uintptr(maxInt(1, vw)), uintptr(maxInt(1, ht-150-footerH-20)), 0x0004|0x0010)
 	} else if active {
 		setWindowPos.Call(h, 0, 0, 86, uintptr(maxInt(1, w)), uintptr(maxInt(1, ht-86)), 0x0004|0x0010)
 	}

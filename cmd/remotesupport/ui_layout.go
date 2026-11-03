@@ -113,6 +113,12 @@ func layoutUI() {
 	hide(state.shareLink)
 	hide(state.techsBtn)
 
+	if homeVisible(mode, connected) {
+		layoutHome(w, h)
+		return
+	}
+	hideHomeControls()
+
 	if connected && !fullscreen.Load() {
 		// Toolbar action buttons sit on the painted toolbar surface (y≈104).
 		moveControl(state.fullscreenButton, w-158, 104, 134, 40, true)
@@ -172,77 +178,16 @@ func layoutUI() {
 		return
 	}
 
-	if mode == 0 {
-		// Two primary action cards, side by side, tracking the window width.
-		contentW := w - contentX - gutter
-		cardGap := 24
-		cardW := (contentW - cardGap) / 2
-		cardY := 176
-		cardH := 200
-		moveControl(state.homeGet, contentX, cardY, cardW, cardH, true)
-		moveControl(state.homeGive, contentX+cardW+cardGap, cardY, cardW, cardH, true)
-		moveControl(state.elevate, w-gutter-260, 110, 260, 40, !isElevated())
-		moveControl(state.back, 184, 500, 150, 48, false)
-		moveControl(state.action, 350, 500, 250, 48, false)
-		moveControl(state.copy, 620, 500, 170, 48, false)
-		moveControl(state.codeLabel, 184, 350, 816, 110, false)
-		moveControl(state.remoteEdit, 184, 350, 816, 58, false)
-		return
-	}
-
-	if mode == 1 {
-		if capturing.Load() {
-			setText(state.back, "Bağlantıyı Kes")
-			hide(state.codeLabel)
-			hide(state.copy)
-			hide(state.remoteEdit)
-			hide(state.action)
-			cg := computeChatGeom(w, h)
-			if cg.visible {
-				moveControl(state.chatInput, cg.inputX, cg.inputY, cg.inputW, cg.inputH, true)
-				moveControl(state.chatSend, cg.sendX, cg.inputY, cg.sendW, cg.inputH, true)
-			}
-			moveControl(state.back, w-gutter-180, 118, 168, 40, true)
-			moveControl(state.techsBtn, w-gutter-380, 118, 190, 40, techCount() > 0)
-			moveControl(state.stayOpen, contentX, 214, 150, 40, idleWarn.Load())
-			return
+	if mode == 1 && capturing.Load() {
+		setText(state.back, "Bağlantıyı Kes")
+		cg := computeChatGeom(w, h)
+		if cg.visible {
+			moveControl(state.chatInput, cg.inputX, cg.inputY, cg.inputW, cg.inputH, true)
+			moveControl(state.chatSend, cg.sendX, cg.inputY, cg.sendW, cg.inputH, true)
 		}
-		if deviceModeActive.Load() && !codeSessionActive.Load() {
-			// Device-access wait screen: only the painted banner is shown.
-			hide(state.chatInput)
-			hide(state.chatSend)
-			hide(state.codeLabel)
-			hide(state.copy)
-			hide(state.shareLink)
-			hide(state.remoteEdit)
-			hide(state.action)
-			moveControl(state.back, 0, 0, 1, 1, false)
-			return
-		}
-		setText(state.back, "‹ Geri")
-		hide(state.chatInput)
-		hide(state.chatSend)
-		moveControl(state.codeLabel, 214, 344, 560, 86, true)
-		// Both stay inside the code card (y 322..450).
-		moveControl(state.copy, 784, 334, 158, 52, true)
-		moveControl(state.shareLink, 784, 394, 158, 44, true)
-		moveControl(state.remoteEdit, 178, 335, 782, 58, false)
-		// Right of the QR code (QR occupies contentX..+150, y 478..628).
-		moveControl(state.back, contentX+166, 574, 140, 46, true)
-		moveControl(state.action, contentX+322, 574, 260, 46, true)
-		return
-	}
-
-	if mode == 2 {
-		setText(state.back, "‹ Geri")
-		moveControl(state.techDev, contentX, 272, 620, 240, true)
-		moveControl(state.techDevManage, contentX+636, 272, 146, 40, true)
-		moveControl(state.remoteEdit, contentX, 352, 620, 56, true)
-		moveControl(state.action, contentX+636, 352, 146, 56, true) // Bağlan next to input
-		moveControl(state.remotePass, contentX, 444, 620, 34, true)
-		moveControl(state.copy, 0, 0, 1, 1, false)
-		moveControl(state.codeLabel, 0, 0, 1, 1, false)
-		moveControl(state.back, contentX, 506, 140, 46, true)
+		moveControl(state.back, w-gutter-180, 118, 168, 40, true)
+		moveControl(state.techsBtn, w-gutter-380, 118, 190, 40, techCount() > 0)
+		moveControl(state.stayOpen, contentX, 214, 150, 40, idleWarn.Load())
 	}
 }
 

@@ -104,3 +104,9 @@ func bilinearBGRA(src []byte, srcW, srcH, dstW, dstH int, gray bool) *image.RGBA
 	}
 	return dst
 }
+
+// ScaleBGRA converts a top-down BGRA buffer to RGBA, scaled down to
+// maxHeight (0 = original size). Used for viewer thumbnails.
+func ScaleBGRA(raw []byte, w, h, maxHeight int) *image.RGBA {
+	return scaleBGRA(raw, w, h, maxHeight, false)
+}

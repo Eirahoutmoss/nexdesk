@@ -79,26 +79,31 @@ Hepsi aynı oturuma birlikte katılabilir: bir teknisyen masadan, biri telefonda
 
 ## İlk bağlantı: adım adım
 
+NexDesk açılınca ana ekran iki karttan oluşur: solda **Bu Bilgisayar — Destek Al**, sağda **Uzak Bilgisayar — Destek Ver**. Altında daha önce destek verdiğiniz bilgisayarlar küçük ekran resimleriyle listelenir. Diğer sayfalar (Bağlantılar, Ayarlar, Cihaz Erişimi, Hakkında, Yeni Oturum Penceresi, Sunucusuz Bağlantı) sol üstteki **☰** menüsündedir; logoya tıklamak ana ekrana döndürür.
+
 <table>
 <tr>
 <td width="50%" valign="top">
 
 ### Destek ALAN (yardım isteyen)
-1. `NexDesk.exe`'yi açın, **Destek Al**'a tıklayın.
-2. İlk seferde Windows Güvenlik Duvarı izni sorulur (yönetici onayı). Bu izin yalnızca yerel ağ içindir.
-3. Ekranda çıkan **10 haneli kodu** destek verene iletin (**Kopyala** düğmesi ya da karekod).
-4. Bağlantı isteği gelince pencerede bağlananın **adını ve IP adresini** görürsünüz. Tanıyorsanız **Evet / İzin Ver**.
+1. `NexDesk.exe`'yi açın. **10 haneli kod** sol kartta kendiliğinden hazırdır.
+2. İlk açılışta Windows Güvenlik Duvarı izni sorulur (yönetici onayı). Bu izin yalnızca yerel ağ içindir.
+3. Kodu destek verene iletin (**Kopyala**, **Bağlantı Linki** ya da karekod).
+4. Bağlantı isteği gelince bağlananın **adını ve IP adresini** görürsünüz. Tanıyorsanız **Evet / İzin Ver**.
 5. Ekranınız paylaşıldığı sürece bunu belirten bir uyarı görünür. İstediğiniz an **Bağlantıyı Kes**.
+
+Kullanılmayan kod 5 dakikada bir kendiliğinden yenilenir; oturum bitince de yeni kod gelir.
 
 </td>
 <td width="50%" valign="top">
 
 ### Destek VEREN (teknisyen)
-1. **Destek Ver**'e tıklayın.
-2. Karşı tarafın **kodunu** (ya da linkini / internet kodunu) yapıştırın veya **Kayıtlı Cihazlar** listesinden seçin.
-3. **Bağlan**'a basın ve karşı tarafın onayını bekleyin.
-4. Bağlanınca karşı ekran açılır. Araçlar **İşlemler ▾** menüsündedir.
-5. İşiniz bitince **Bağlantıyı Kes**.
+1. Sağ karttaki kutuya karşı tarafın **kodunu** (ya da linkini / internet kodunu) yazın, ya da listeden **kayıtlı bir cihaz** seçin.
+2. **BAĞLAN**'a basın ve karşı tarafın onayını bekleyin.
+3. Bağlanınca karşı ekran açılır. Araçlar **İşlemler ▾** menüsündedir.
+4. İşiniz bitince **Bağlantıyı Kes**.
+
+**Tekrar bağlanmak:** Ana ekrandaki küçük resme tıklayın. Kayıtlı cihaz (kimlik + parola) tek tıkla bağlanır; kodla bağlandığınız bir bilgisayar için kod kutusu açılır, karşı taraftaki yeni kodu girersiniz. Sağ tık: Yeniden Adlandır, Listeden Kaldır.
 
 </td>
 </tr>
@@ -106,7 +111,9 @@ Hepsi aynı oturuma birlikte katılabilir: bir teknisyen masadan, biri telefonda
 
 > **Güvenlik kodu (SAS):** Bağlandıktan sonra **İşlemler ▾ → Güvenlik Kodunu Doğrula** ile iki ekrandaki 6 haneli kodu (telefonla) karşılaştırın. Aynıysa araya kimse girmemiştir; farklıysa oturum hemen kesilir.
 
-> **Aynı anda birden fazla kişiye destek:** Sol menüde **＋ Yeni Oturum** ikinci (üçüncü…) bir pencere açar. Her pencere ayrı bir bağlantı yürütür ve başlığında bağlı olduğu kodu gösterir.
+> **Aynı anda birden fazla kişiye destek:** **☰ → Yeni Oturum Penceresi** ikinci (üçüncü…) bir pencere açar. Her pencere ayrı bir bağlantı yürütür ve başlığında bağlı olduğu kodu gösterir. Ek pencereler destek vermek içindir; kendi kodlarını yalnızca **Kod Oluştur** denirse üretirler. Bir pencere başka bir bilgisayara bağlıyken o pencerenin kodu kapalıdır.
+
+> **Küçük resimler:** Destek verdiğiniz bilgisayarın ekranından küçük bir resim, bağlantıdan birkaç saniye sonra ve oturum kapanırken çekilir; yalnızca sizin bilgisayarınızda (`%APPDATA%\RemoteSupport\thumbs\`) saklanır. Ekranlarda kişisel veri (ör. hasta bilgisi) olabilir: ana ekrandaki **Küçük resimler: Açık** yazısına tıklayarak kapatabilirsiniz; kapatınca var olanlar da silinir.
 
 Kod, onaylanana kadar **5 dakika** geçerlidir; oturum sürdükçe başka teknisyenler aynı kodla katılabilir (her biri ayrıca onaylanır).
 
@@ -154,7 +161,7 @@ Teknisyen penceresinde; çoğu **İşlemler ▾** menüsündedir:
 Ayrıca: teknisyen karşı tarafın imlecini görür, destek alan da teknisyenin nereye tıkladığını halkayla görür. Ağ tıkandığında görüntü kalitesi kendiliğinden düşer (720p → 480p → gri ton), açılınca geri yükselir.
 
 ### Bağlantılar (adres defteri)
-Sol menüdeki **Bağlantılar** sayfası bağlandığınız her bilgisayarı kaydeder: ada, etikete ya da bilgisayar adına göre arama, etiketler (birim, kat, konum…), tarihli not geçmişi ve **Uyandır (Wake-on-LAN)** — o bilgisayar bir kez destek aldığında MAC adresi öğrenilir, aynı ağdaki kapalı makine açılabilir.
+**☰ → Bağlantılar** sayfası bağlandığınız her bilgisayarı kaydeder: ada, etikete ya da bilgisayar adına göre arama, etiketler (birim, kat, konum…), tarihli not geçmişi ve **Uyandır (Wake-on-LAN)** — o bilgisayar bir kez destek aldığında MAC adresi öğrenilir, aynı ağdaki kapalı makine açılabilir.
 
 ---
 
@@ -184,9 +191,9 @@ Kodla bağlıyken kaydetme isteği gönderin. Karşı tarafta bir onay kutusu ç
 | **Tarayıcı / iPhone** | Üst çubukta **ⓘ → Bu bilgisayarı kaydet** |
 
 ### Elle kurulum
-1. **Destek alınacak bilgisayarda:** Sol menü → **Cihaz Erişimi** → **cihaz kimliği** (boş bırakılırsa bilgisayar adı + rastgele ek, ör. `MUHASEBE-7KQ2`) ve **parola** (en az 4 karakter) → **Kaydet ve Etkinleştir**. Bilgisayar arka planda sunucuya kayıtlı kalır ve normal kullanılmaya devam eder. Parola sonradan değiştirilebilir.
+1. **Destek alınacak bilgisayarda:** **☰ → Cihaz Erişimi** → **cihaz kimliği** (boş bırakılırsa bilgisayar adı + rastgele ek, ör. `MUHASEBE-7KQ2`) ve **parola** (en az 4 karakter) → **Kaydet ve Etkinleştir**. Bilgisayar arka planda sunucuya kayıtlı kalır ve normal kullanılmaya devam eder. Parola sonradan değiştirilebilir.
 2. **Teknisyen tarafında:**
-   - **Windows:** **Destek Ver** → kimlik + parola → **Bağlan**. İlk bağlantıda cihaz **Kayıtlı Cihazlar** listesine eklenir; **Yönet ▾** ile yeniden adlandırılır ya da silinir.
+   - **Windows:** Ana ekranın sağ kartına kimlik + parola → **BAĞLAN**. İlk bağlantıda cihaz **Kayıtlı Cihazlar** listesine eklenir; **Yönet ▾** ile yeniden adlandırılır ya da silinir.
    - **Android ve tarayıcı / iPhone:** Ana ekran → **Kayıtlı cihazlar → ＋** → kimlik, ad, parola.
 
 Kayıtlı cihaza bağlanırken onay sorulmaz (parola yeterlidir); bağlanan her teknisyen bilgisayarda bildirilir ve denetim kaydına yazılır.
@@ -240,7 +247,7 @@ Hangi yol kullanılırsa kullanılsın kod **aynı kutuya** yapıştırılır; N
 | **İnternet kodu** (varsayılan kapalı) | Sunucu yokken, ev modemi | `REQKE-2GZKC-0FZX1-S32WG` | Modemde port UPnP ile açılır, dış IP koda gömülür. |
 | **Davet kodu** | Sunucu yok, UPnP yok | `DAVET-…` / `YANIT-…` | Tamamen sunucusuz, iki adımlı el sıkışma. |
 
-**Davet kodu:** Destek veren **Destek Ver → Sunucusuz Bağlan (davet kodu)** ile bir kod üretip gönderir → destek alan **Destek Al → Davet Kodunu Yapıştır**, onaylar ve çıkan **YANIT** kodunu geri gönderir → destek veren yanıtı yapıştırır, bağlantı kurulur.
+**Davet kodu:** Destek veren **☰ → Sunucusuz Bağlantı → Davet Kodu Oluştur** ile bir kod üretip gönderir → destek alan **☰ → Sunucusuz Bağlantı → Davet Kodunu Yapıştır**, onaylar ve çıkan **YANIT** kodunu geri gönderir → destek veren yanıtı yapıştırır, bağlantı kurulur.
 
 **İnternet kodu:** Sunucu varken gerekmez ve destek alan bilgisayarın 8091 portunu internete açar; bu yüzden kapalıdır. Gerekirse `%APPDATA%\RemoteSupport\settings.json` dosyasına `"internet_code": true` ekleyin. Modemde UPnP kapalıysa 8091/TCP elle yönlendirilmelidir; operatör paylaşımlı IP (CGNAT) kullanıyorsa bu yol çalışmaz, davet kodunu kullanın.
 
@@ -302,7 +309,7 @@ Tüm veriler `%APPDATA%\RemoteSupport\` altında, yalnızca o bilgisayarda tutul
 | `settings.json` | Ayarlar |
 | `tech-devices.json` | Teknisyen tarafındaki kayıtlı cihazlar |
 | `addressbook.json` | Adres defteri, etiketler, notlar, MAC adresleri |
-| `recent.json` | Son bağlantılar |
+| `remotes.json`, `thumbs\` | Ana ekrandaki son bağlantılar ve küçük resimleri |
 | `netlog.log` | Bağlantı günlüğü (2 MB'da döner) |
 | `audit.log` | Denetim kaydı |
 | `macros\*.json` | Kayıtlı makrolar |

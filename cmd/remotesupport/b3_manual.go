@@ -257,8 +257,9 @@ func layoutManualButtons(mode int, connected bool) {
 		manualOpBtn = createControl(state.hwnd, "BUTTON", "Sunucusuz Bağlan (davet kodu)", 0x00000001, 0, 0, 10, 10, ID_MANUAL_OP)
 		manualAgentBtn = createControl(state.hwnd, "BUTTON", "Davet Kodunu Yapıştır", 0x00000001, 0, 0, 10, 10, ID_MANUAL_AGENT)
 	}
-	moveControl(manualOpBtn, contentX+156, 506, 290, 46, mode == 2 && !connected)
-	moveControl(manualAgentBtn, contentX+598, 574, 210, 46, mode == 1 && !connected && !capturing.Load() && !deviceModeActive.Load())
+	// Both live in the ☰ menu (Sunucusuz Bağlantı) now.
+	hide(manualOpBtn)
+	hide(manualAgentBtn)
 }
 
 func onManualCommand(id int) bool {

@@ -89,11 +89,25 @@ func onCommand(id int) {
 	if onTechsCommand(id) {
 		return
 	}
+	if onHomeCommand(id) {
+		return
+	}
 	switch id {
 	case ID_GET_SUPPORT:
 		supportMode()
 	case ID_GIVE_SUPPORT:
 		giveMode()
+	case ID_MANUAL_OP, ID_MANUAL_AGENT:
+		// Serverless invite: this window takes that role; pause its code.
+		stopBackgroundCode()
+		if id == ID_MANUAL_OP {
+			operatorBusy.Store(true)
+		} else {
+			state.mu.Lock()
+			state.mode = 1
+			state.mu.Unlock()
+		}
+		onManualCommand(id)
 	case ID_BACK:
 		stopSession()
 		home()
@@ -234,6 +248,13 @@ func onCommand(id int) {
 		checkForUpdates()
 		return
 	case ID_CONNECT:
+		if capturing.Load() || techCount() > 0 {
+			setStatus("● Bu bilgisayara şu an destek veriliyor; önce o oturumu kapatın.")
+			return
+		}
+		if operatorBusy.Load() {
+			return // already connecting
+		}
 		if pass := getText(state.remotePass); pass != "" {
 			// Device access: the box holds a device id, not a one-time code.
 			id := strings.TrimSpace(getText(state.remoteEdit))
@@ -243,9 +264,7 @@ func onCommand(id int) {
 			}
 			setOpEndpoint("")
 			setOpDevicePass(pass)
-			setText(state.action, "BAĞLANIYOR...")
-			setStatus("● Cihaza bağlanılıyor…")
-			go startOperator(id)
+			beginOperator(id, "● Cihaza bağlanılıyor…")
 			return
 		}
 		code, ws := parseJoinInput(getText(state.remoteEdit))
@@ -255,9 +274,7 @@ func onCommand(id int) {
 		}
 		setOpEndpoint(ws)
 		setOpDevicePass("")
-		setText(state.action, "BAĞLANIYOR...")
-		setStatus("● Bağlantı kodu doğrulanıyor...")
-		go startOperator(code)
+		beginOperator(code, "● Bağlantı kodu doğrulanıyor...")
 	case ID_SHARE_LINK:
 		code := getActiveCode()
 		if code == "" {
@@ -273,9 +290,14 @@ func onCommand(id int) {
 }
 
 func stopSession() {
+	if state.mode != 1 {
+		saveCurrentThumbnail() // technician: last picture of the remote screen
+	}
 	if !skipBye.Swap(false) {
 		sendBye(ctlPeers())
 	}
+	operatorBusy.Store(false)
+	setHomeCode("")
 	b1SessionEnded()
 	userStopped.Store(true)
 	auditLog("Oturum kapatıldı")
@@ -386,7 +408,7 @@ func drawOwnerButton(dis *drawItemStruct) {
 	viewer.mu.RUnlock()
 
 	// ---- Primary action cards (Destek Al / Destek Ver) ----
-	if id == ID_GET_SUPPORT || id == ID_GIVE_SUPPORT {
+	if (id == ID_GET_SUPPORT || id == ID_GIVE_SUPPORT) && bh >= 100 {
 		var fill, border uint32 = uiPanelColor, uiBorderColor
 		if pressed || hot {
 			fill = uiPanelHi
@@ -429,7 +451,7 @@ func drawOwnerButton(dis *drawItemStruct) {
 
 	var fill, border uint32
 	switch {
-	case id == ID_CONNECT:
+	case id == ID_CONNECT || id == ID_GET_SUPPORT:
 		// Primary filled accent pill (faux gradient: accent body + lighter cap).
 		fill, border = uiAccentColor, uiAccentColor
 		if pressed {
@@ -559,34 +581,19 @@ func wndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 	case 0x0202: // WM_LBUTTONUP
 		x := int(int16(lParam & 0xffff))
 		y := int(int16((lParam >> 16) & 0xffff))
-		// Left navigation rows: painted at y = 102 + 52*i, height 44 (see paintSidebar).
-		if x >= 0 && x < navW && y >= 96 {
-			switch {
-			case y >= 96 && y < 148:
-				sidebarPage.Store(0)
-				home()
-				return 0
-			case y >= 148 && y < 200:
-				sidebarPage.Store(1)
-				return 0
-			case y >= 200 && y < 252:
-				sidebarPage.Store(2)
-				showSettings()
-				return 0
-			case y >= 252 && y < 304:
-				sidebarPage.Store(4)
-				showDeviceAccess()
-				return 0
-			case y >= 304 && y < 356:
-				sidebarPage.Store(3)
-				showAbout()
-				return 0
-			case y >= 356 && y < 408:
-				// "Yeni Oturum" — an action, not a page: open another window.
-				launchNewSession()
-				return 0
-			}
+		if homeClick(x, y, false) {
+			return 0
 		}
+	case 0x0205: // WM_RBUTTONUP
+		x := int(int16(lParam & 0xffff))
+		y := int(int16((lParam >> 16) & 0xffff))
+		if homeClick(x, y, true) {
+			return 0
+		}
+	case 0x0200: // WM_MOUSEMOVE
+		homeHover(int(int16(lParam&0xffff)), int(int16((lParam>>16)&0xffff)))
+	case 0x02A3: // WM_MOUSELEAVE
+		homeHover(-1, -1)
 	case 0x0111: // WM_COMMAND
 		onCommand(int(wParam & 0xffff))
 		return 0
@@ -685,4 +692,29 @@ func installBtnHover(h uintptr) {
 	if origBtnProc == 0 {
 		origBtnProc = prev
 	}
+}
+
+// beginOperator starts connecting to another computer from the home
+// screen. This window's own code is paused while it gives support.
+func beginOperator(code, status string) {
+	stopBackgroundCode()
+	operatorBusy.Store(true)
+	setText(state.action, "BAĞLANIYOR...")
+	setStatus(status)
+	invalidateHomeCode()
+	go func() {
+		startOperator(code)
+		// startOperator returns when signaling ends. If no session came of
+		// it (wrong code, rejected, unreachable), free the window again.
+		state.mu.Lock()
+		p := state.peer
+		state.mu.Unlock()
+		if p == nil {
+			operatorBusy.Store(false)
+			setText(state.action, "BAĞLAN")
+			if state.hwnd != 0 {
+				postMessage.Call(state.hwnd, WM_APP_RELAYOUT, 0, 0)
+			}
+		}
+	}()
 }

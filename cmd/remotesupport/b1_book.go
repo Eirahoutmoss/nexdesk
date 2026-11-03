@@ -170,7 +170,7 @@ func bookSeen(host string) {
 		}
 	})
 	netlogf("Karşı bilgisayar: %s", host)
-	if !dup && state.mode == 2 && state.hwnd != 0 {
+	if !dup && state.mode != 1 && state.hwnd != 0 {
 		if e, ok := bookGet(host); ok && len(e.Notes) > 0 {
 			postMessage.Call(state.hwnd, WM_APP_NOTES, 0, 0)
 		}
@@ -447,11 +447,6 @@ func bookClick(x, y int) bool {
 	state.mu.Lock()
 	mode := state.mode
 	state.mu.Unlock()
-	if x >= 0 && x < navW && y >= 148 && y < 200 {
-		sidebarPage.Store(1)
-		showBook()
-		return true
-	}
 	if mode != modeBook || x < contentX || y < bookRowsTop {
 		return false
 	}

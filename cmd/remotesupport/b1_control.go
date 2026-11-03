@@ -104,7 +104,7 @@ func handleB1Control(peer *webrtcpeer.Peer, raw string) bool {
 		return true
 	case strings.HasPrefix(raw, "REGDEV_OK:"):
 		// Operator side: target approved; save the device for direct reconnect.
-		if state.mode == 2 {
+		if state.mode != 1 {
 			id, pass, _ := strings.Cut(strings.TrimPrefix(raw, "REGDEV_OK:"), "|")
 			id = strings.TrimSpace(id)
 			if id != "" {
@@ -116,7 +116,7 @@ func handleB1Control(peer *webrtcpeer.Peer, raw string) bool {
 		}
 		return true
 	case raw == "REGDEV_NO":
-		if state.mode == 2 {
+		if state.mode != 1 {
 			setStatus("● Karşı taraf kalıcı erişimi reddetti.")
 		}
 		return true

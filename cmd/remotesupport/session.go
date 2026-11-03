@@ -82,19 +82,27 @@ func clearChildren() {
 	clearResolutionButtons()
 	hideBookControls()
 	for _, h := range []uintptr{
-		state.homeGet, state.homeGive, state.codeLabel, state.remoteEdit, state.action, state.copy, state.back, state.fileSend, state.fullscreenButton, state.settingsEndpoint, state.settingsQuality, state.settingsResolution, state.settingsSave, state.settingsReset, state.settingsIdle, state.settingsIdleAction, state.settingsInternet, state.remotePass, state.techDev, state.techDevManage, state.devOn, state.devId, state.devPass, state.devSave, state.settingsTurnURL, state.settingsTurnUser, state.settingsTurnPass, state.aboutTheme, state.aboutUpdate, state.elevate, state.clipSend, state.clipGet, state.chatInput, state.chatSend, state.stayOpen, state.actionsBtn, state.techsBtn,
+		state.homeGet, state.homeGive, state.codeLabel, state.shareLink, state.remoteEdit, state.action, state.copy, state.back, state.fileSend, state.fullscreenButton, state.settingsEndpoint, state.settingsQuality, state.settingsResolution, state.settingsSave, state.settingsReset, state.settingsIdle, state.settingsIdleAction, state.settingsInternet, state.remotePass, state.techDev, state.techDevManage, state.devOn, state.devId, state.devPass, state.devSave, state.settingsTurnURL, state.settingsTurnUser, state.settingsTurnPass, state.aboutTheme, state.aboutUpdate, state.elevate, state.clipSend, state.clipGet, state.chatInput, state.chatSend, state.stayOpen, state.actionsBtn, state.techsBtn,
 	} {
 		hide(h)
 	}
 }
 
 func home() {
-	codeSessionActive.Store(false)
 	clearChildren()
-	state.mode = 0
-	setStatus("Bir işlem seç.")
+	state.mu.Lock()
+	if state.mode != 1 || (!capturing.Load() && techCount() == 0) {
+		state.mode = 0
+	}
+	state.mu.Unlock()
+	sidebarPage.Store(0)
+	populateTechDevCombo()
+	setStatus("Hazır.")
 	setSessionTitle("") // back to the plain app title
 	layoutUI()
+	if state.hwnd != 0 {
+		invalidateRect.Call(state.hwnd, 0, 1)
+	}
 }
 
 func clearResolutionButtons() {
@@ -109,44 +117,19 @@ func clearResolutionButtons() {
 	}
 }
 
+// supportMode: "Destek Al". The code lives on the home screen; this only
+// makes sure one is being prepared (a "Yeni Oturum" window has none until
+// asked) and shows home.
 func supportMode() {
-	ensureFirewall()
-	startEmbeddedSignaling()
-	clearChildren()
-	state.mode = 1
-	// Set before layoutUI: with device access on, layout would otherwise
-	// pick the device-wait screen and hide the code and its buttons.
-	codeSessionActive.Store(true)
-	hide(state.homeGet)
-	hide(state.homeGive)
-
-	setText(state.action, "Kod oluşturuluyor...")
-	show(state.codeLabel)
-	show(state.action)
-	show(state.copy)
-	show(state.back)
-	layoutUI()
-
-	setStatus("Sunucuya bağlanılıyor...")
-	go startTarget()
+	homeCodeWanted.Store(true)
+	home()
+	homeCodeTick()
 }
 
+// giveMode: "Destek Ver" — the connect box is on the home screen.
 func giveMode() {
-	clearChildren()
-	state.mode = 2
-	hide(state.homeGet)
-	hide(state.homeGive)
-
-	populateTechDevCombo()
-	show(state.techDev)
-	show(state.techDevManage)
-	show(state.remoteEdit)
-	show(state.remotePass)
-	show(state.action)
-	show(state.back)
-	setText(state.action, "BAĞLAN")
-	layoutUI()
-	setStatus("Kodu girin — ya da kayıtlı bir cihaza bağlanmak için cihaz kimliği + parolasını girin.")
+	home()
+	setFocus.Call(state.remoteEdit)
 }
 
 // codeSessionActive: a "Destek Al" code session is open on this machine.
@@ -181,6 +164,7 @@ func startTarget() {
 	if err != nil {
 		netlogf("Signaling bağlantısı başarısız: sunucu=%s hata=%v", ep, err)
 		setStatus("● Sunucuya bağlanılamadı (" + ep + "): " + err.Error())
+		homeCodeFailed("Sunucuya bağlanılamadı: " + err.Error())
 		return
 	}
 
@@ -190,6 +174,7 @@ func startTarget() {
 		_ = c.Close(context.Background())
 		netlogf("Kod oluşturulamadı: sunucu=%s hata=%v", ep, err)
 		setStatus("● Kod oluşturulamadı: " + signalingErrorText(err, ep))
+		homeCodeFailed(signalingErrorText(err, ep))
 		return
 	}
 	netlogf("Kod oluşturuldu: sunucu=%s sunucu-sürümü=%d özellikler=%v", ep, c.ServerV, c.Features)
@@ -199,7 +184,7 @@ func startTarget() {
 	state.sig = c
 	state.mu.Unlock()
 
-	setCode(formatCode(code))
+	setHomeCode(code)
 	setActiveCode(code)
 	if isLocalEndpoint(ep) && currentSettings().InternetCode {
 		// Kod bu makinedeki gömülü signaling'de ve kullanıcı internet kodunu
@@ -219,26 +204,14 @@ func startTarget() {
 	}
 	codeExpiryUnix.Store(time.Now().Unix() + int64(expires))
 	auditLog("Kod oluşturuldu")
-	setText(state.action, "Kod hazır")
 	setStatus(fmt.Sprintf("● Hazır  •  Kod yaklaşık %d saniye geçerli", expires))
-
+	if state.hwnd != 0 {
+		postMessage.Call(state.hwnd, WM_APP_RELAYOUT, 0, 0)
+	}
 	go func() {
-		defer logCrash("codeCountdown")
-		t := time.NewTicker(time.Second)
-		defer t.Stop()
-		for range t.C {
-			if capturing.Load() || state.mode != 1 {
-				return
-			}
-			if state.hwnd != 0 {
-				invalidateRect.Call(state.hwnd, 0, 0)
-			}
-			if time.Now().Unix() >= codeExpiryUnix.Load() {
-				return
-			}
-		}
+		targetLoop(ctx, c)
+		onCodeLoopEnd(c)
 	}()
-	go targetLoop(ctx, c)
 }
 
 // targetLoop serves the signaling channel on the target side. It returns
@@ -548,6 +521,16 @@ func newPeerTo(ctx context.Context, c *clientsignaling.Client, peerID string) (*
 }
 
 func showConnectedView() {
+	if state.mode == 1 {
+		// Target side: the "your screen is being shared" view, no viewer.
+		clearChildren()
+		layoutUI()
+		if state.hwnd != 0 {
+			invalidateRect.Call(state.hwnd, 0, 1)
+		}
+		return
+	}
+	hideHomeControls()
 	hide(state.action)
 	hide(state.back)
 	hide(state.remoteEdit)
@@ -852,7 +835,7 @@ func updateMonitorButtons(count int) {
 	const buttonH = 30
 	const gap = 8
 	for i := 0; i < count; i++ {
-		x := 178 + i*(buttonW+gap)
+		x := contentX + 10 + i*(buttonW+gap)
 		h := createControl(state.hwnd, "BUTTON", fmt.Sprintf("Monitör %d", i+1), 0x00000001, x, 102, buttonW, buttonH, ID_MONITOR_BASE+i)
 		buttons = append(buttons, h)
 	}
@@ -867,7 +850,7 @@ func updateMonitorButtons(count int) {
 		{"Otomatik", ID_RES_ORIGINAL}, {"1080p", ID_RES_1080P}, {"720p", ID_RES_720P}, {"480p", ID_RES_480P},
 	}
 	resButtons := make([]uintptr, 0, len(res))
-	startX := 178
+	startX := contentX + 10
 	if count > 0 {
 		startX += count * (buttonW + gap)
 	}

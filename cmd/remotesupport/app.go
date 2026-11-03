@@ -22,6 +22,7 @@ func main() {
 	loadTechDevices()
 	loadBranding()
 	loadRecent()
+	loadRemotes()
 	setThemeVars(currentSettings().ThemePreset) // apply saved theme before brushes
 	initUITheme()
 	loadLogo()
@@ -154,13 +155,15 @@ func main() {
 	hide(state.techDevManage)
 
 	state.mode = 0
-	state.statusText = "Bir işlem seç."
+	state.statusText = "Hazır."
+	populateTechDevCombo()
 	layoutUI()
 
 	showWindow.Call(hwnd, 1)
 	updateWindow.Call(hwnd)
 
 	startDeviceMode() // if enabled in settings, register and wait for technicians
+	startHomeCodeManager()
 	startUpdateWatcher()
 
 	var m msg

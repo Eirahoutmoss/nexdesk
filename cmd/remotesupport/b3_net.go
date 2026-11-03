@@ -347,7 +347,7 @@ var inetCopyBtn, inetWABtn uintptr
 // agent is waiting for a connection, and hides them everywhere else.
 func layoutInetButtons(mode int, connected bool) {
 	ic, _ := internetCodeState()
-	visible := mode == 1 && !connected && !capturing.Load() && ic != ""
+	visible := false && ic != "" && mode == 1 && !connected // the home card shows the internet code; Kopyala copies it
 	if visible && inetCopyBtn == 0 {
 		inetCopyBtn = createControl(state.hwnd, "BUTTON", "Kopyala", 0x00000001, 0, 0, 10, 10, ID_INET_COPY)
 		inetWABtn = createControl(state.hwnd, "BUTTON", "WhatsApp ile Gönder", 0x00000001, 0, 0, 10, 10, ID_INET_WA)

@@ -221,6 +221,10 @@ type appSettings struct {
 	// ThemePreset: "gece" (Gece Mavisi), "sicak" (Sıcak), "acik" (Aydınlık).
 	// Empty falls back to the default in setThemeVars.
 	ThemePreset string `json:"theme_preset"`
+
+	// NoThumbnails: do not keep small pictures of supported computers'
+	// screens for the home screen tiles (on by default).
+	NoThumbnails bool `json:"no_thumbnails,omitempty"`
 }
 
 var settingsMu sync.RWMutex
@@ -558,4 +562,12 @@ type paintStruct struct {
 	restore     int32
 	incUpdate   int32
 	rgbReserved [32]byte
+}
+
+// updateSettings changes the settings and saves them.
+func updateSettings(fn func(*appSettings)) {
+	settingsMu.Lock()
+	fn(&appCfg)
+	settingsMu.Unlock()
+	saveSettings()
 }

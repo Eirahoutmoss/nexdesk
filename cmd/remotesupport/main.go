@@ -101,6 +101,7 @@ var (
 	fillRect            = user32.NewProc("FillRect")
 	getClientRect       = user32.NewProc("GetClientRect")
 	getCursorPos        = user32.NewProc("GetCursorPos")
+	clientToScreen      = user32.NewProc("ClientToScreen")
 	createPopupMenu     = user32.NewProc("CreatePopupMenu")
 	appendMenuW         = user32.NewProc("AppendMenuW")
 	trackPopupMenu      = user32.NewProc("TrackPopupMenu")
