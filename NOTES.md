@@ -15,3 +15,4 @@
 - **Destek alan tarafta İşlemler:** Dosya Gönder, Pano Gönder, Güvenlik Kodunu Doğrula, Bağlantı Günlüğünü Aç. Günlük ayrıca ☰ menüsünde.
 - **Destek alınırken donma.** Ekran paylaşılırken destek alan tarafta ☰ menüsünden bir sayfaya geçilince teknisyenin fare/klavyesi yok sayılıyordu. Oturum sürerken bu sayfalar kapalı.
 - **Tek kod.** Aynı bilgisayarda birden fazla NexDesk açıksa yalnızca ilki kendiliğinden kod üretir.
+- **Destek alan tarafın bağlanınca kilitlenmesi giderildi.** Bağlantı kurulur kurulmaz destek alan NexDesk tamamen kilitlenebiliyordu (görüntü donuyor, bağlantıyı kesmek de işlemiyordu).
