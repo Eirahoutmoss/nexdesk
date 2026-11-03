@@ -111,6 +111,8 @@ func sendFileToPeer(path string) {
 	}
 	fileCancel.Store(false)
 	buf := make([]byte, 48*1024)
+	lastPct := int64(-1)
+	var lastStatus time.Time
 	for {
 		if fileCancel.Swap(false) {
 			_ = peer.SendFileData([]byte{0x04}) // abort → receiver drops the .part
@@ -143,7 +145,12 @@ func sendFileToPeer(path string) {
 			if info.Size() > 0 {
 				pct = sent * 100 / info.Size()
 			}
-			setStatus(fmt.Sprintf("● Gönderiliyor: %s  %d%%", filepath.Base(path), pct))
+			// At most ~4 status updates a second: every update repaints the
+			// whole window, and once per 48 KB chunk loaded the PC heavily.
+			if pct != lastPct && time.Since(lastStatus) >= 250*time.Millisecond {
+				lastPct, lastStatus = pct, time.Now()
+				setStatus(fmt.Sprintf("● Gönderiliyor: %s  %d%%", filepath.Base(path), pct))
+			}
 		}
 		if readErr == io.EOF {
 			break

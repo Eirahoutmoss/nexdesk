@@ -68,6 +68,7 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 		var capFail captureFailure
 		var busySince time.Time
 		var busyLogged, encLogged, bigLogged bool
+		var restUntil time.Time
 		for {
 			select {
 			case <-ctx.Done():
@@ -80,6 +81,10 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 				if still > 20 && tick%2 == 1 {
 					continue // quiet screen: check at half rate
 				}
+				if time.Now().Before(restUntil) {
+					continue // CPU budget: rest as long as the last frame took
+				}
+				workStart := time.Now()
 				busy := !peer.ScreenIdle()
 				cong.tick(peer, busy)
 				if busy {
@@ -155,6 +160,12 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 				if capturing.CompareAndSwap(false, true) && state.hwnd != 0 {
 					invalidateRect.Call(state.hwnd, 0, 0)
 				}
+				// Keep the supported computer usable: a stream may use at most
+				// about half of one CPU core. On a busy screen (scrolling, a
+				// file dialog loading icons) every frame is large; capture +
+				// JPEG then took most of each 50 ms tick and older PCs became
+				// sluggish. Rest at least as long as this frame's work took.
+				restUntil = time.Now().Add(time.Since(workStart))
 			}
 		}
 	}()

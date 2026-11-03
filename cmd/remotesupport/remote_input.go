@@ -99,7 +99,8 @@ func handleRemoteFile(data []byte) {
 			return
 		}
 		fileRx.received += int64(n)
-		if fileRx.total > 0 {
+		if fileRx.total > 0 && time.Since(rxStatusAt) >= 250*time.Millisecond {
+			rxStatusAt = time.Now() // at most ~4 repaints a second (was one per chunk)
 			setStatus(fmt.Sprintf("● Dosya alınıyor: %s  %d%%", fileRx.name, fileRx.received*100/fileRx.total))
 		}
 	case 0x03:
@@ -494,3 +495,5 @@ func humanBytes(n int64) string {
 		return fmt.Sprintf("%d bayt", n)
 	}
 }
+
+var rxStatusAt time.Time // last "Dosya alınıyor" update (guarded by fileRx.mu)

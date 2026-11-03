@@ -18,6 +18,10 @@ func addComboItems(hwnd uintptr, items ...string) {
 
 func main() {
 	runtime.LockOSThread()
+	// The window thread is a single-threaded COM apartment: the shell's file
+	// dialogs (Dosya Gönder) load slowly and spin up extra threads when the
+	// calling thread has not initialised COM.
+	syscall.NewLazyDLL("ole32.dll").NewProc("CoInitializeEx").Call(0, 0x2|0x4) // COINIT_APARTMENTTHREADED|COINIT_DISABLE_OLE1DDE
 	loadSettings()
 	loadTechDevices()
 	loadBranding()
