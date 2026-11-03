@@ -69,6 +69,7 @@ var (
 	procCreateDIBSection    = gdi32.NewProc("CreateDIBSection")
 	procGdiFlush            = gdi32.NewProc("GdiFlush")
 	procGetCursorInfo       = user32.NewProc("GetCursorInfo")
+	procLoadCursorW         = user32.NewProc("LoadCursorW")
 	procGetIconInfo         = user32.NewProc("GetIconInfo")
 	procDrawIconEx          = user32.NewProc("DrawIconEx")
 	procSetThreadDpiCtx     = user32.NewProc("SetThreadDpiAwarenessContext")
@@ -103,8 +104,19 @@ type iconInfo struct {
 // monitor's top-left corner at (originX, originY) in virtual-screen space.
 func drawCursor(memdc uintptr, originX, originY int) {
 	ci := cursorInfo{CbSize: uint32(unsafe.Sizeof(cursorInfo{}))}
-	if r, _, _ := procGetCursorInfo.Call(uintptr(unsafe.Pointer(&ci))); r == 0 || ci.Flags&1 == 0 || ci.Cursor == 0 {
-		return // CURSOR_SHOWING not set
+	if r, _, _ := procGetCursorInfo.Call(uintptr(unsafe.Pointer(&ci))); r == 0 {
+		return
+	}
+	// In a Remote Desktop session (and when input is injected) Windows often
+	// reports the pointer as hidden, so the technician saw it only on clicks.
+	// The technician always needs to see where the pointer is: fall back to
+	// the standard arrow when the cursor is reported hidden or has no handle.
+	if ci.Flags&1 == 0 || ci.Cursor == 0 {
+		arrow, _, _ := procLoadCursorW.Call(0, 32512) // IDC_ARROW (shared, not freed)
+		if arrow == 0 {
+			return
+		}
+		ci.Cursor = arrow
 	}
 	var ii iconInfo
 	hx, hy := int32(0), int32(0)

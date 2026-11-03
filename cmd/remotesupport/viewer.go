@@ -108,7 +108,7 @@ func toggleFullscreen() {
 		fullscreenSavedStyle = style
 		fullscreenSavedRect = rc
 		fullscreenSavedValid = true
-		setWindowLongPtr.Call(state.hwnd, ^uintptr(15), 0x80000000|0x10000000)
+		setWindowLongPtr.Call(state.hwnd, ^uintptr(15), 0x80000000|0x10000000|0x02000000) // WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN: without CLIPCHILDREN the main window painted over the viewer (flicker, UI fragments)
 		cx := systemMetric(0)
 		cy := systemMetric(1)
 		setWindowPos.Call(state.hwnd, 0, 0, 0, uintptr(maxInt(1, int(cx))), uintptr(maxInt(1, int(cy))), 0x0004|0x0020|0x0040)
