@@ -7,3 +7,4 @@
 - **Daha net görüntü.** Pencereye sığdırılan uzak ekran artık yumuşatılarak küçültülüyor; küçük yazılar okunaklı.
 - **Daha hızlı ekran aktarımı.** Ekran, teknisyenin penceresinin boyutunda gönderiliyor (daha az veri, daha az işlemci, daha net yazı). Ekran değişirken 20 kare/sn; durgun ekranda yakalama yarı hıza iniyor ve hiç veri gitmiyor.
 - **Titreme ve kalıntı parçalar giderildi.** Görüntü artık pencereye birebir çiziliyor; çevresinde eski kare ya da arayüz parçası kalmıyor.
+- **Tam ekranda titreme ve uzak imleç düzeltildi.** Tam ekran görünümde ana pencere görüntünün üzerine çizilmiyor; destek alanın fare imleci her zaman görünüyor.
