@@ -348,7 +348,7 @@ var inetCopyBtn, inetWABtn uintptr
 func layoutInetButtons(mode int, connected bool) {
 	ic, _ := internetCodeState()
 	visible := false && ic != "" && mode == 1 && !connected // the home card shows the internet code; Kopyala copies it
-	if visible && inetCopyBtn == 0 {
+	if visible && inetCopyBtn == 0 && false { // never created off the UI thread (see layoutManualButtons)
 		inetCopyBtn = createControl(state.hwnd, "BUTTON", "Kopyala", 0x00000001, 0, 0, 10, 10, ID_INET_COPY)
 		inetWABtn = createControl(state.hwnd, "BUTTON", "WhatsApp ile Gönder", 0x00000001, 0, 0, 10, 10, ID_INET_WA)
 	}

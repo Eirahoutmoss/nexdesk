@@ -253,13 +253,12 @@ func openWhatsApp(msg string) {
 }
 
 func layoutManualButtons(mode int, connected bool) {
-	if manualOpBtn == 0 && (mode == 1 || mode == 2) {
-		manualOpBtn = createControl(state.hwnd, "BUTTON", "Sunucusuz Bağlan (davet kodu)", 0x00000001, 0, 0, 10, 10, ID_MANUAL_OP)
-		manualAgentBtn = createControl(state.hwnd, "BUTTON", "Davet Kodunu Yapıştır", 0x00000001, 0, 0, 10, 10, ID_MANUAL_AGENT)
-	}
-	// Both live in the ☰ menu (Sunucusuz Bağlantı) now.
-	hide(manualOpBtn)
-	hide(manualAgentBtn)
+	// Both live in the ☰ menu (Sunucusuz Bağlantı) now; the buttons are no
+	// longer created. (They used to be created lazily here, and layoutUI also
+	// runs on network goroutines: a window created on such a thread has no
+	// message loop, and the first message the UI thread sent it hung the
+	// whole program — the supported side froze right after connecting.)
+	_, _ = mode, connected
 }
 
 func onManualCommand(id int) bool {
