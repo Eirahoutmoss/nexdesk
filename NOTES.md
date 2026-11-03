@@ -16,3 +16,4 @@
 - **Destek alınırken donma.** Ekran paylaşılırken destek alan tarafta ☰ menüsünden bir sayfaya geçilince teknisyenin fare/klavyesi yok sayılıyordu. Oturum sürerken bu sayfalar kapalı.
 - **Tek kod.** Aynı bilgisayarda birden fazla NexDesk açıksa yalnızca ilki kendiliğinden kod üretir.
 - **Destek alan tarafın bağlanınca kilitlenmesi giderildi.** Bağlantı kurulur kurulmaz destek alan NexDesk tamamen kilitlenebiliyordu (görüntü donuyor, bağlantıyı kesmek de işlemiyordu).
+- **Sistemi ağırlaştırmıyor.** Ekran yayını işlemciyi en fazla yarım çekirdek kadar kullanıyor; dosya aktarımında durum satırı seyrek güncelleniyor; Dosya Gönder penceresi hızlı açılıyor.
