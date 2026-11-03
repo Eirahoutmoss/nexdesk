@@ -81,6 +81,9 @@ func resizeViewer() {
 	} else if active {
 		setWindowPos.Call(h, 0, 0, 86, uintptr(maxInt(1, w)), uintptr(maxInt(1, ht-86)), 0x0004|0x0010)
 	}
+	if active && state.mode != 1 {
+		reportViewSize()
+	}
 }
 
 func toggleFullscreen() {
@@ -228,28 +231,26 @@ func setViewerFrame(f screen.Frame) {
 	// performs interface/color-model work for every pixel and became a major
 	// CPU/GC cost at 3440x1440. Read the Y/Cb/Cr planes directly instead.
 	if ycc, ok := img.(*image.YCbCr); ok && bounds.Min.X == 0 && bounds.Min.Y == 0 {
-		ratio := ycc.SubsampleRatio
+		// Chroma subsampling as shifts, decided once per frame instead of a
+		// switch per pixel.
+		var sx, sy uint
+		switch ycc.SubsampleRatio {
+		case image.YCbCrSubsampleRatio444:
+		case image.YCbCrSubsampleRatio422:
+			sx = 1
+		case image.YCbCrSubsampleRatio440:
+			sy = 1
+		default: // 4:2:0, the common JPEG case
+			sx, sy = 1, 1
+		}
 		for y := 0; y < height; y++ {
-			yOff := y * ycc.YStride
-			for x := 0; x < width; x++ {
-				var cx, cy int
-				switch ratio {
-				case image.YCbCrSubsampleRatio444:
-					cx, cy = x, y
-				case image.YCbCrSubsampleRatio422:
-					cx, cy = x/2, y
-				case image.YCbCrSubsampleRatio440:
-					cx, cy = x, y/2
-				default: // 4:2:0, the common JPEG case
-					cx, cy = x/2, y/2
-				}
-				cOff := cy*ycc.CStride + cx
-				r, g, b := color.YCbCrToRGB(ycc.Y[yOff+x], ycc.Cb[cOff], ycc.Cr[cOff])
-				i := (y*width + x) * 4
-				pixels[i+0] = b
-				pixels[i+1] = g
-				pixels[i+2] = r
-				pixels[i+3] = 0
+			yRow := ycc.Y[y*ycc.YStride : y*ycc.YStride+width]
+			cOff := (y >> sy) * ycc.CStride
+			cb, cr := ycc.Cb[cOff:], ycc.Cr[cOff:]
+			d := pixels[y*width*4 : (y+1)*width*4]
+			for x, yy := range yRow {
+				r, g, b := color.YCbCrToRGB(yy, cb[x>>sx], cr[x>>sx])
+				d[x*4], d[x*4+1], d[x*4+2], d[x*4+3] = b, g, r, 0
 			}
 		}
 	} else {

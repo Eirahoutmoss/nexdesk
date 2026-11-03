@@ -251,6 +251,15 @@ func handleRemoteInput(peer *webrtcpeer.Peer, raw string) {
 		}
 		return
 	}
+	if strings.HasPrefix(raw, "VIEWSIZE:") {
+		if state.mode == 1 {
+			var w, h int
+			if _, err := fmt.Sscanf(strings.TrimPrefix(raw, "VIEWSIZE:"), "%d,%d", &w, &h); err == nil {
+				setViewSize(peer, w, h)
+			}
+		}
+		return
+	}
 	if strings.HasPrefix(raw, "RESOLUTION:") {
 		if state.mode != 1 {
 			return

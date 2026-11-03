@@ -59,7 +59,7 @@ var (
 // agentOnly messages act on the machine that is being supported; the operator
 // must never obey them (a hostile "agent" could otherwise lock or drive the
 // technician's PC). operatorOnly is the reverse.
-var agentOnly = []string{"INPUT:", "CURTAIN:", "LOCKINPUT:", "ANNOT:", "ANNOT_CLEAR", "SYSINFO_REQ", "CLIP_REQ", "CLIPONCE:", "REPAIR:", "RESOLUTION:", "MONITOR:", "ADAPT:", "HANDOVER_REQ", "REVERSE:", "REC:", "KEYFRAME"}
+var agentOnly = []string{"INPUT:", "CURTAIN:", "LOCKINPUT:", "ANNOT:", "ANNOT_CLEAR", "SYSINFO_REQ", "CLIP_REQ", "CLIPONCE:", "REPAIR:", "RESOLUTION:", "MONITOR:", "ADAPT:", "HANDOVER_REQ", "REVERSE:", "REC:", "KEYFRAME", "VIEWSIZE:"}
 var operatorOnly = []string{"SYSINFO:", "MONITORS:", "REPAIR_RES:", "HANDOVER_CODE:", "HANDOVER_DONE", "HANDOVER_NO", "FRAUD_HOLD:", "MACS:", "SECURE_DESKTOP:", "ADAPT_INFO:", "ROSTER:", "INPUTBY:", "CAPTURE_FAIL:"}
 
 func hasAnyPrefix(s string, ps []string) bool {

@@ -553,6 +553,7 @@ func showConnectedView() {
 	hide(state.remoteEdit)
 	showViewer()
 	show(state.fileSend)
+	resetViewSize() // a new peer: the target needs our viewer size again
 	layoutUI()
 	resizeViewer()
 	setSessionTitle(getActiveCode()) // label the window for multi-session use

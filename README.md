@@ -374,7 +374,7 @@ web/                 tarayıcı / iPhone uygulaması (sunucuya gömülü)
 integration/         uçtan uca testler          sunucu/  sunucu kurulum betiği
 ```
 
-Ekran 64×64'lük karolara bölünür ve yalnızca değişen karolar gönderilir; durgun ekranda veri gitmez. Yeni kare, ağ öncekini teslim edince üretilir; hat yavaşsa görüntü gecikmez, kare atlanır.
+Ekran, teknisyenin penceresinin boyutunda gönderilir (pencere küçükse görüntü kaynakta küçültülür; daha az veri, daha net yazı). 64×64'lük karolara bölünür ve yalnızca değişen karolar gider; durgun ekranda veri gitmez, yakalama da yarı hıza iner. Yeni kare, ağ öncekini teslim edince üretilir; hat yavaşsa görüntü gecikmez, kare atlanır.
 
 Hata bildirimi ve önerilere açığız — issue açmaktan çekinmeyin.
 

@@ -23,8 +23,8 @@ import (
 const (
 	tileSize     = tiles.Size
 	atlasCols    = tiles.Cols
-	keyInterval  = 5 * time.Second
-	deltaMaxPart = 0.6 // above this share of changed tiles a keyframe is cheaper
+	keyInterval  = 30 * time.Second // refresh base at most this often, and only while the screen changes
+	deltaMaxPart = 0.6              // above this share of changed tiles a keyframe is cheaper
 )
 
 type tileEncoder struct {
@@ -59,16 +59,18 @@ func (e *tileEncoder) reset() { e.prev = nil }
 // encode returns the payload to send, or skip=true when nothing changed.
 func (e *tileEncoder) encode(img *image.RGBA, monitor, quality int) (payload []byte, skip bool, err error) {
 	b := img.Bounds()
-	key := e.prev == nil || e.prev.Bounds() != b || e.monitor != monitor ||
-		time.Since(e.lastKey) > keyInterval || e.forceKey.Swap(false)
+	key := e.prev == nil || e.prev.Bounds() != b || e.monitor != monitor || e.forceKey.Swap(false)
 	var dirty []image.Point
 	if !key {
 		dirty = changedTiles(e.prev, img)
 		if len(dirty) == 0 {
+			// Nothing changed: send nothing. (A periodic full frame used to go
+			// out every few seconds even on a still screen; the channel is
+			// reliable and a viewer that lost its base asks for a keyframe.)
 			return nil, true, nil
 		}
 		total := ((b.Dx() + tileSize - 1) / tileSize) * ((b.Dy() + tileSize - 1) / tileSize)
-		if float64(len(dirty)) > deltaMaxPart*float64(total) {
+		if float64(len(dirty)) > deltaMaxPart*float64(total) || time.Since(e.lastKey) > keyInterval {
 			key = true
 		}
 	}

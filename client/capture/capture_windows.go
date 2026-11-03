@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	"math"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -226,20 +225,16 @@ func captureMonitorImage(index int, maxHeight int) (*image.RGBA, error) {
 	defer procDeleteDC.Call(memdc)
 
 	// Blit straight into a top-down 32-bit DIB section and read its memory.
-	// The old CreateCompatibleBitmap + GetDIBits path called GetDIBits while
-	// the bitmap was still selected into the DC, which the API forbids; most
-	// drivers tolerate it, but some (e.g. the Remote Desktop display driver)
-	// return 0 rows with no error, and the screen never left the machine.
-	hdr := bitmapInfoHeader{BiSize: uint32(unsafe.Sizeof(bitmapInfoHeader{})), BiWidth: int32(m.Width), BiHeight: -int32(m.Height), BiPlanes: 1, BiBitCount: 32, BiCompression: biRGB}
-	bmi := bitmapInfo{BmiHeader: hdr}
-	var bits unsafe.Pointer
-	bmp, _, err := procCreateDIBSection.Call(screen, uintptr(unsafe.Pointer(&bmi)), dibRGBColors, uintptr(unsafe.Pointer(&bits)), 0, 0)
-	if bmp == 0 || bits == nil {
-		return nil, fmt.Errorf("capture: CreateDIBSection: %w", err)
+	// (The old CreateCompatibleBitmap + GetDIBits path called GetDIBits while
+	// the bitmap was still selected into the DC, which the API forbids; some
+	// drivers, e.g. Remote Desktop's, then returned 0 rows with no error.)
+	// The DIB is kept between frames: reallocating ~8 MB per frame cost time
+	// and garbage for nothing.
+	bits, err := dibFor(screen, m.Width, m.Height)
+	if err != nil {
+		return nil, err
 	}
-	defer procDeleteObject.Call(bmp)
-
-	old, _, _ := procSelectObject.Call(memdc, bmp)
+	old, _, _ := procSelectObject.Call(memdc, dib.bmp)
 	if old == 0 {
 		return nil, errors.New("capture: SelectObject failed")
 	}
@@ -253,92 +248,37 @@ func captureMonitorImage(index int, maxHeight int) (*image.RGBA, error) {
 	}
 	procGdiFlush.Call()
 	procSelectObject.Call(memdc, old)
-	gray := Grayscale.Load()
 	raw := unsafe.Slice((*byte)(bits), m.Width*m.Height*4)
 
-	img := image.NewRGBA(image.Rect(0, 0, m.Width, m.Height))
-	for y := 0; y < m.Height; y++ {
-		src := raw[y*m.Width*4:]
-		dst := img.Pix[y*img.Stride:]
-		for x := 0; x < m.Width; x++ {
-			i := x * 4
-			if gray {
-				l := uint8((uint32(src[i+2])*77 + uint32(src[i+1])*150 + uint32(src[i+0])*29) >> 8)
-				dst[i+0], dst[i+1], dst[i+2] = l, l, l
-			} else {
-				dst[i+0] = src[i+2]
-				dst[i+1] = src[i+1]
-				dst[i+2] = src[i+0]
-			}
-			dst[i+3] = 0xff
-		}
-	}
-
-	if maxHeight > 0 && img.Bounds().Dy() > maxHeight {
-		img = resizeBilinear(img, maxHeight)
-	}
-	return img, nil
+	// Convert BGRA -> RGBA and scale in one pass: when the technician's
+	// window is smaller than this screen there is no full-size copy at all.
+	return scaleBGRA(raw, m.Width, m.Height, maxHeight, Grayscale.Load()), nil
 }
 
-func resizeBilinear(src *image.RGBA, dstH int) *image.RGBA {
-	srcW, srcH := src.Bounds().Dx(), src.Bounds().Dy()
-	dstH = maxIntCapture(1, dstH)
-	dstW := maxIntCapture(1, srcW*dstH/srcH)
-	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
-	if dstW == srcW && dstH == srcH {
-		copy(dst.Pix, src.Pix)
-		return dst
-	}
-	// Precompute horizontal taps once; fixed-point (8-bit) weights and direct
-	// Pix indexing make this several times faster than RGBAAt/SetRGBA.
-	x0s := make([]int, dstW)
-	x1s := make([]int, dstW)
-	fxs := make([]uint32, dstW)
-	for x := 0; x < dstW; x++ {
-		sx := (float64(x)+0.5)*float64(srcW)/float64(dstW) - 0.5
-		x0 := int(math.Floor(sx))
-		fx := sx - float64(x0)
-		if x0 < 0 {
-			x0, fx = 0, 0
-		}
-		x1 := x0 + 1
-		if x1 >= srcW {
-			x1 = srcW - 1
-		}
-		x0s[x], x1s[x], fxs[x] = x0*4, x1*4, uint32(fx*256)
-	}
-	sp, ss := src.Pix, src.Stride
-	for y := 0; y < dstH; y++ {
-		sy := (float64(y)+0.5)*float64(srcH)/float64(dstH) - 0.5
-		y0 := int(math.Floor(sy))
-		fy := sy - float64(y0)
-		if y0 < 0 {
-			y0, fy = 0, 0
-		}
-		y1 := y0 + 1
-		if y1 >= srcH {
-			y1 = srcH - 1
-		}
-		wy := uint32(fy * 256)
-		r0, r1 := sp[y0*ss:], sp[y1*ss:]
-		d := dst.Pix[y*dst.Stride:]
-		for x := 0; x < dstW; x++ {
-			a, b, wx := x0s[x], x1s[x], fxs[x]
-			for c := 0; c < 3; c++ {
-				top := uint32(r0[a+c])*(256-wx) + uint32(r0[b+c])*wx
-				bot := uint32(r1[a+c])*(256-wx) + uint32(r1[b+c])*wx
-				d[x*4+c] = uint8((top*(256-wy) + bot*wy + 32768) >> 16)
-			}
-			d[x*4+3] = 255
-		}
-	}
-	return dst
+// dib is the reusable capture bitmap (guarded by captureMu).
+var dib struct {
+	bmp  uintptr
+	bits unsafe.Pointer
+	w, h int
 }
-func maxIntCapture(a, b int) int {
-	if a > b {
-		return a
+
+func dibFor(screen uintptr, w, h int) (unsafe.Pointer, error) {
+	if dib.bmp != 0 && dib.w == w && dib.h == h {
+		return dib.bits, nil
 	}
-	return b
+	if dib.bmp != 0 {
+		procDeleteObject.Call(dib.bmp)
+		dib.bmp, dib.bits = 0, nil
+	}
+	hdr := bitmapInfoHeader{BiSize: uint32(unsafe.Sizeof(bitmapInfoHeader{})), BiWidth: int32(w), BiHeight: -int32(h), BiPlanes: 1, BiBitCount: 32, BiCompression: biRGB}
+	bmi := bitmapInfo{BmiHeader: hdr}
+	var bits unsafe.Pointer
+	bmp, _, err := procCreateDIBSection.Call(screen, uintptr(unsafe.Pointer(&bmi)), dibRGBColors, uintptr(unsafe.Pointer(&bits)), 0, 0)
+	if bmp == 0 || bits == nil {
+		return nil, fmt.Errorf("capture: CreateDIBSection: %w", err)
+	}
+	dib.bmp, dib.bits, dib.w, dib.h = bmp, bits, w, h
+	return bits, nil
 }
 
 var _ = procGetSystemMetrics

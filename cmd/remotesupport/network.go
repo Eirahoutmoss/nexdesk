@@ -35,6 +35,7 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 				n = activeStreams.Add(-1)
 			}
 			tilesByPeer.Delete(peer)
+			viewSizes.Delete(peer)
 			if n > 0 {
 				return
 			}
@@ -51,9 +52,13 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 			return
 		}
 		setStatus("● Ekran kanalı hazır. Ekran aktarılıyor...")
-		// ~15 fps cap. Frames are produced only when the screen channel has
-		// drained (ScreenIdle), and only changed 64x64 tiles are sent.
-		ticker := time.NewTicker(66 * time.Millisecond)
+		// Up to 20 fps while the screen changes; after ~1 s without a change
+		// the screen is checked only every other tick (10 fps), so a still
+		// screen costs less than before. Frames are produced only when the
+		// screen channel has drained (ScreenIdle), and only changed 64x64
+		// tiles are sent.
+		ticker := time.NewTicker(50 * time.Millisecond)
+		var tick, still int
 		defer ticker.Stop()
 		enc := &tileEncoder{}
 		activeTiles.Store(enc)
@@ -70,6 +75,10 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 			case <-ticker.C:
 				if fraudHold.Load() {
 					continue // fraud shield: stop streaming until the user decides
+				}
+				tick++
+				if still > 20 && tick%2 == 1 {
+					continue // quiet screen: check at half rate
 				}
 				busy := !peer.ScreenIdle()
 				cong.tick(peer, busy)
@@ -90,6 +99,7 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 				if quality == 0 {
 					quality = 88
 				}
+				maxHeight = viewLimitedHeight(peer, monitor, maxHeight)
 				quality, maxHeight = adaptParams(quality, maxHeight)
 				img, err := sharedCapture(monitor, maxHeight)
 				if err != nil {
@@ -112,8 +122,10 @@ func startCapture(peer *webrtcpeer.Peer, ctx context.Context) {
 					continue
 				}
 				if skip {
+					still++
 					continue
 				}
+				still = 0
 				if len(payload) > screen.MaxPayloadSize {
 					if !bigLogged {
 						bigLogged = true
