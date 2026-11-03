@@ -1,0 +1,21 @@
+name: Deneme sürümü
+on:
+  push:
+    branches: [deneme-1.5.4]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sürümü oluştur
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum -c NexDesk.exe.sha256
+          gh release delete v1.5.4-test --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create v1.5.4-test NexDesk.exe NexDesk.exe.sha256 \
+            --repo "$GITHUB_REPOSITORY" --prerelease \
+            --target 8d0bcda4c84e5d0ea6a8e679828a85a17c41d420 \
+            --title "NexDesk 1.5.4 (deneme)" --notes-file NOTES.md
