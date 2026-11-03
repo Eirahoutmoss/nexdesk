@@ -629,7 +629,7 @@ func sendCtlRetry(peer *webrtcpeer.Peer, msg string) {
 // tick finds the screen channel still busy with the previous frame.
 type congestion struct {
 	ticks, busy int
-	calm        int
+	calm, hot   int
 	since       time.Time
 }
 
@@ -649,9 +649,18 @@ func (c *congestion) tick(peer *webrtcpeer.Peer, busy bool) {
 	lv := adaptLevel.Load()
 	switch {
 	case ratio > 0.6 && lv < 2: // max level 2: keep colour; grey helped little
-		lv++
+		// Step down only after two congested windows in a row (~4 s): a
+		// single burst (a keyframe, a scrolled page) used to flip the
+		// resolution back and forth, each flip a visible full refresh.
 		c.calm = 0
+		c.hot++
+		if c.hot < 2 {
+			return
+		}
+		c.hot = 0
+		lv++
 	case ratio < 0.15:
+		c.hot = 0
 		c.calm++
 		if c.calm >= 4 && lv > 0 { // ~8 s of headroom before stepping back up
 			lv--
@@ -661,6 +670,7 @@ func (c *congestion) tick(peer *webrtcpeer.Peer, busy bool) {
 		}
 	default:
 		c.calm = 0
+		c.hot = 0
 		return
 	}
 	adaptLevel.Store(lv)

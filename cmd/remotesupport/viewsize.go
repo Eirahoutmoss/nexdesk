@@ -52,8 +52,9 @@ func viewLimitedHeight(peer *webrtcpeer.Peer, monitor, maxHeight int) int {
 	if scale >= 0.98 {
 		return maxHeight // the viewer shows (nearly) every pixel
 	}
-	h := int(float64(m.Height)*scale + 0.999)
-	h = (h + 7) &^ 7 // steps of 8 px: small window moves don't restart the stream
+	// Exactly the fitted size (rounded down so it never exceeds the window):
+	// the viewer can then draw it 1:1.
+	h := int(float64(m.Height) * scale)
 	if h < 360 {
 		h = 360
 	}

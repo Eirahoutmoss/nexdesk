@@ -169,7 +169,7 @@ var (
 	capKey   [2]int
 	capAt    time.Time
 	capErr   error
-	capReuse = 50 * time.Millisecond
+	capReuse = 30 * time.Millisecond // below the 50 ms tick: one stream never gets the same capture twice
 )
 
 // sharedCapture grabs the screen once for all technicians' streams: a frame

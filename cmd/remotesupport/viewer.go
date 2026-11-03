@@ -352,28 +352,21 @@ func viewerWndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 	case 0x000F: // WM_PAINT
 		var ps paintStruct
 		hdc, _, _ := beginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
-		viewer.mu.Lock()
-		pixels := viewer.pixels // immutable after publication; setViewerFrame replaces the slice.
+		// Hold the read lock while drawing: tile deltas patch the pixel
+		// buffer in place, and drawing a half-patched buffer showed as
+		// flickering fragments.
+		viewer.mu.RLock()
+		pixels := viewer.pixels
 		width, height := viewer.width, viewer.height
 		fit, zoom, panX, panY := viewer.fit, viewer.zoom, viewer.panX, viewer.panY
-		clearNeeded := viewer.clearNeeded
-		viewer.clearNeeded = false
-		viewer.mu.Unlock()
 		if hdc != 0 {
 			var rc rect
 			getClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
 			dw := int(rc.Right - rc.Left)
 			dh := int(rc.Bottom - rc.Top)
-			// Clear only when the viewer geometry changes. Frame arrivals invalidate
-			// the same window, but must not clear the existing image first.
-			// That preserves the no-flicker behavior while keeping letterbox areas black.
-			if clearNeeded {
-				blackBrush, _, _ := getStockObject.Call(4) // BLACK_BRUSH
-				if blackBrush != 0 {
-					fillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), blackBrush)
-				}
-			}
 			if len(pixels) == 0 {
+				blackBrush, _, _ := getStockObject.Call(4) // BLACK_BRUSH
+				fillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), blackBrush)
 				setBkMode.Call(hdc, 1)
 				setTextColor.Call(hdc, rgb(uiMutedColor))
 				oldf, _, _ := selectObject.Call(hdc, uiBodyFont)
@@ -382,37 +375,12 @@ func viewerWndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 				selectObject.Call(hdc, oldf)
 			}
 			if len(pixels) > 0 && width > 0 && height > 0 && dw > 0 && dh > 0 {
-				var left, top, drawW, drawH int
-				if fit {
-					left, top, drawW, drawH = fitRect(width, height, dw, dh)
-				} else {
-					drawW = maxInt(1, int(math.Round(float64(width)*zoom)))
-					drawH = maxInt(1, int(math.Round(float64(height)*zoom)))
-					left = int(math.Round(panX))
-					top = int(math.Round(panY))
-				}
-				bi := bitmapInfo{BmiHeader: bitmapInfoHeader{
-					BiSize:        uint32(unsafe.Sizeof(bitmapInfoHeader{})),
-					BiWidth:       int32(width),
-					BiHeight:      -int32(height),
-					BiPlanes:      1,
-					BiBitCount:    32,
-					BiCompression: 0,
-				}}
-				if drawW == width && drawH == height {
-					setStretchMode.Call(hdc, 3) // 1:1, no scaling: COLORONCOLOR is exact and fastest
-				} else {
-					// Scaled to the window: COLORONCOLOR just drops rows and columns,
-					// which breaks small text apart. HALFTONE averages them and keeps
-					// text readable; it is only used when the image is actually scaled.
-					setStretchMode.Call(hdc, 4) // HALFTONE
-					setBrushOrgEx.Call(hdc, 0, 0, 0)
-				}
-				stretchDIBits.Call(hdc,
-					uintptr(left), uintptr(top), uintptr(drawW), uintptr(drawH),
-					0, 0, uintptr(width), uintptr(height),
-					uintptr(unsafe.Pointer(&pixels[0])), uintptr(unsafe.Pointer(&bi)), 0, 0x00CC0020)
+				left, top, drawW, drawH := viewerDrawRect(width, height, dw, dh, fit, zoom, panX, panY)
+				paintViewerImage(hdc, dw, dh, pixels, width, height, left, top, drawW, drawH)
 			}
+		}
+		viewer.mu.RUnlock()
+		if hdc != 0 {
 			endPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 		}
 		return 0
@@ -606,13 +574,7 @@ func normalizedViewerPoint(mx, my int) (float64, float64, bool) {
 	var rc rect
 	getClientRect.Call(viewer.hwnd, uintptr(unsafe.Pointer(&rc)))
 	dw, dh := int(rc.Right-rc.Left), int(rc.Bottom-rc.Top)
-	if fit {
-		left, top, drawW, drawH = fitRect(width, height, dw, dh)
-	} else {
-		drawW = maxInt(1, int(math.Round(float64(width)*zoom)))
-		drawH = maxInt(1, int(math.Round(float64(height)*zoom)))
-		left, top = int(math.Round(panX)), int(math.Round(panY))
-	}
+	left, top, drawW, drawH = viewerDrawRect(width, height, dw, dh, fit, zoom, panX, panY)
 	if drawW <= 0 || drawH <= 0 || mx < left || my < top || mx >= left+drawW || my >= top+drawH {
 		return 0, 0, false
 	}
@@ -665,4 +627,93 @@ func sendRemoteMouse(moveType string, mx, my int, button int, delta int) {
 		viewer.mu.Unlock()
 	}
 	sendRemoteInput(peer, protocol.InputEvent{T: moveType, X: x, Y: y, B: button, D: delta})
+}
+
+// viewerDrawRect places the remote image in the viewer. A frame that is
+// within a few pixels of the fitted size (the target streams at our window
+// size) is drawn 1:1, centred: exact pixels, no scaling, no blur.
+func viewerDrawRect(width, height, dw, dh int, fit bool, zoom, panX, panY float64) (left, top, drawW, drawH int) {
+	if !fit {
+		drawW = maxInt(1, int(math.Round(float64(width)*zoom)))
+		drawH = maxInt(1, int(math.Round(float64(height)*zoom)))
+		return int(math.Round(panX)), int(math.Round(panY)), drawW, drawH
+	}
+	if width <= dw && height <= dh && (dw-width <= 4 || dh-height <= 4) {
+		return (dw - width) / 2, (dh - height) / 2, width, height
+	}
+	return fitRect(width, height, dw, dh)
+}
+
+// Back buffer for scaled drawing: HALFTONE scaling is slow enough to be
+// seen building up on screen when done straight onto the window; it is
+// done off-screen and copied in one BitBlt instead. Window thread only.
+var viewerBack struct {
+	dc, bmp, old uintptr
+	w, h         int
+}
+
+// paintViewerImage draws the frame and blacks out the rest of the client
+// area every time, so no stale strips (old frames, earlier UI) remain
+// around the image when its size or position changes.
+func paintViewerImage(hdc uintptr, dw, dh int, pixels []byte, width, height, left, top, drawW, drawH int) {
+	bi := bitmapInfo{BmiHeader: bitmapInfoHeader{
+		BiSize:     uint32(unsafe.Sizeof(bitmapInfoHeader{})),
+		BiWidth:    int32(width),
+		BiHeight:   -int32(height),
+		BiPlanes:   1,
+		BiBitCount: 32,
+	}}
+	paintLetterbox(hdc, dw, dh, left, top, drawW, drawH)
+	if drawW == width && drawH == height {
+		setStretchMode.Call(hdc, 3) // 1:1: exact and fastest
+		stretchDIBits.Call(hdc, uintptr(left), uintptr(top), uintptr(drawW), uintptr(drawH),
+			0, 0, uintptr(width), uintptr(height), uintptr(unsafe.Pointer(&pixels[0])), uintptr(unsafe.Pointer(&bi)), 0, 0x00CC0020)
+		return
+	}
+	if viewerBack.dc == 0 || viewerBack.w != drawW || viewerBack.h != drawH {
+		if viewerBack.dc != 0 {
+			selectObject.Call(viewerBack.dc, viewerBack.old)
+			deleteObject.Call(viewerBack.bmp)
+			deleteDC.Call(viewerBack.dc)
+			viewerBack.dc = 0
+		}
+		dc, _, _ := createCompatDC.Call(hdc)
+		bmp, _, _ := createCompatBmp.Call(hdc, uintptr(drawW), uintptr(drawH))
+		if dc == 0 || bmp == 0 {
+			if dc != 0 {
+				deleteDC.Call(dc)
+			}
+			if bmp != 0 {
+				deleteObject.Call(bmp)
+			}
+			// No back buffer: draw directly.
+			setStretchMode.Call(hdc, 4)
+			setBrushOrgEx.Call(hdc, 0, 0, 0)
+			stretchDIBits.Call(hdc, uintptr(left), uintptr(top), uintptr(drawW), uintptr(drawH),
+				0, 0, uintptr(width), uintptr(height), uintptr(unsafe.Pointer(&pixels[0])), uintptr(unsafe.Pointer(&bi)), 0, 0x00CC0020)
+			return
+		}
+		old, _, _ := selectObject.Call(dc, bmp)
+		viewerBack.dc, viewerBack.bmp, viewerBack.old, viewerBack.w, viewerBack.h = dc, bmp, old, drawW, drawH
+	}
+	setStretchMode.Call(viewerBack.dc, 4) // HALFTONE: keeps small text readable when scaled
+	setBrushOrgEx.Call(viewerBack.dc, 0, 0, 0)
+	stretchDIBits.Call(viewerBack.dc, 0, 0, uintptr(drawW), uintptr(drawH),
+		0, 0, uintptr(width), uintptr(height), uintptr(unsafe.Pointer(&pixels[0])), uintptr(unsafe.Pointer(&bi)), 0, 0x00CC0020)
+	bitBlt.Call(hdc, uintptr(left), uintptr(top), uintptr(drawW), uintptr(drawH), viewerBack.dc, 0, 0, 0x00CC0020)
+}
+
+// paintLetterbox fills the client area outside the image with black.
+func paintLetterbox(hdc uintptr, dw, dh, left, top, drawW, drawH int) {
+	black, _, _ := getStockObject.Call(4)
+	fill := func(l, t, r, b int) {
+		if r > l && b > t {
+			rc := rect{Left: int32(l), Top: int32(t), Right: int32(r), Bottom: int32(b)}
+			fillRect.Call(hdc, uintptr(unsafe.Pointer(&rc)), black)
+		}
+	}
+	fill(0, 0, dw, top)                  // above
+	fill(0, top+drawH, dw, dh)           // below
+	fill(0, top, left, top+drawH)        // left
+	fill(left+drawW, top, dw, top+drawH) // right
 }
