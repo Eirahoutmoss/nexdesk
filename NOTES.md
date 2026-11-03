@@ -9,3 +9,5 @@
 - **Titreme ve kalıntı parçalar giderildi.** Görüntü artık pencereye birebir çiziliyor; çevresinde eski kare ya da arayüz parçası kalmıyor.
 - **Tam ekranda titreme ve uzak imleç düzeltildi.** Tam ekran görünümde ana pencere görüntünün üzerine çizilmiyor; destek alanın fare imleci her zaman görünüyor.
 - **Yeni ana ekran (AnyDesk tarzı).** Sayfalar ☰ menüsünde. Ana ekranda yan yana *Destek Al* (kod açılışta kendiliğinden hazır, süresi dolunca yenilenir) ve *Destek Ver*. Altında destek verdiğiniz bilgisayarlar küçük ekran resimleriyle: kayıtlı cihaz tek tıkla bağlanır, kodla bağlanılan bilgisayar için yeni kod sorulur. Küçük resimler ana ekrandan kapatılabilir.
+- **Bağlantı daha hızlı kuruluyor.** İlk deneme doğrudan yapılıyor; doğrudan yol kurulamazsa birkaç saniye içinde sunucu (TURN) üzerinden bağlanılıyor. Aynı ağda onaydan sonra ekranın gelmesi eskisine göre çok daha kısa sürmeli.
+- **Ana ekran düzeltmeleri.** Kod alanında üst üste binen yazı giderildi; giriş kutuları çerçeveli.
