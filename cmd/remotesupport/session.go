@@ -679,7 +679,7 @@ func askApproval(code, name, from string) bool {
 		who, where, formatCode(code),
 	))
 	r, _, _ := messageBox.Call(state.hwnd, uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), 0x00000004|0x00000020|0x00010000|0x00040000) // + MB_SETFOREGROUND|MB_TOPMOST
-	return r == 6 // IDYES
+	return r == 6                                                                                                                                      // IDYES
 }
 
 func formatCode(code string) string {
