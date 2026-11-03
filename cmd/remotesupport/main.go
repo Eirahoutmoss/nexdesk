@@ -116,6 +116,7 @@ var (
 	registerClassEx     = user32.NewProc("RegisterClassExW")
 	stretchDIBits       = gdi32DLL.NewProc("StretchDIBits")
 	setStretchMode      = gdi32DLL.NewProc("SetStretchBltMode")
+	setBrushOrgEx       = gdi32DLL.NewProc("SetBrushOrgEx")
 	getStockObject      = gdi32DLL.NewProc("GetStockObject")
 	createPen           = gdi32DLL.NewProc("CreatePen")
 	moveToEx            = gdi32DLL.NewProc("MoveToEx")

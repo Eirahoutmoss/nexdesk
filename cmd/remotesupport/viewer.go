@@ -398,7 +398,15 @@ func viewerWndProc(hwnd uintptr, m uint32, wParam, lParam uintptr) uintptr {
 					BiBitCount:    32,
 					BiCompression: 0,
 				}}
-				setStretchMode.Call(hdc, 3) // COLORONCOLOR: materially faster for live remote desktop
+				if drawW == width && drawH == height {
+					setStretchMode.Call(hdc, 3) // 1:1, no scaling: COLORONCOLOR is exact and fastest
+				} else {
+					// Scaled to the window: COLORONCOLOR just drops rows and columns,
+					// which breaks small text apart. HALFTONE averages them and keeps
+					// text readable; it is only used when the image is actually scaled.
+					setStretchMode.Call(hdc, 4) // HALFTONE
+					setBrushOrgEx.Call(hdc, 0, 0, 0)
+				}
 				stretchDIBits.Call(hdc,
 					uintptr(left), uintptr(top), uintptr(drawW), uintptr(drawH),
 					0, 0, uintptr(width), uintptr(height),
