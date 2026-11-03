@@ -8,3 +8,4 @@
 - **Daha hızlı ekran aktarımı.** Ekran, teknisyenin penceresinin boyutunda gönderiliyor (daha az veri, daha az işlemci, daha net yazı). Ekran değişirken 20 kare/sn; durgun ekranda yakalama yarı hıza iniyor ve hiç veri gitmiyor.
 - **Titreme ve kalıntı parçalar giderildi.** Görüntü artık pencereye birebir çiziliyor; çevresinde eski kare ya da arayüz parçası kalmıyor.
 - **Tam ekranda titreme ve uzak imleç düzeltildi.** Tam ekran görünümde ana pencere görüntünün üzerine çizilmiyor; destek alanın fare imleci her zaman görünüyor.
+- **Yeni ana ekran (AnyDesk tarzı).** Sayfalar ☰ menüsünde. Ana ekranda yan yana *Destek Al* (kod açılışta kendiliğinden hazır, süresi dolunca yenilenir) ve *Destek Ver*. Altında destek verdiğiniz bilgisayarlar küçük ekran resimleriyle: kayıtlı cihaz tek tıkla bağlanır, kodla bağlanılan bilgisayar için yeni kod sorulur. Küçük resimler ana ekrandan kapatılabilir.
