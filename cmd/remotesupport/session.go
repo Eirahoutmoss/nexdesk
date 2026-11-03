@@ -312,7 +312,10 @@ func targetLoopMode(ctx context.Context, c *clientsignaling.Client, device bool)
 				// A later offer from the same technician comes from a NEW
 				// operator-side peer (auto-reconnect); replace ours.
 				if p == nil || peerDead(p) || p.HasRemote() {
-					np, err := techBuildPeer(ctx, c, t)
+					// Match the technician: an offer without relay candidates
+					// is a direct-only attempt, so leave TURN out here too.
+					withTURN := strings.Contains(string(sig.Payload), "typ relay")
+					np, err := techBuildPeer(ctx, c, t, withTURN)
 					if err != nil {
 						setStatus("● WebRTC başlatılamadı: " + err.Error())
 						continue
@@ -432,7 +435,10 @@ func startOperator(code string) {
 			if msg.ICE != nil {
 				setSessionTURN(msg.ICE)
 			}
-			peer, err := newPeer(ctx, c, true)
+			// First try a direct path without the TURN relay: with relay
+			// candidates present, ICE spent ~10 s on relay permission checks
+			// even on the same LAN. directFallback adds TURN if needed.
+			peer, err := newPeer(ctx, c, false)
 			if err != nil {
 				setStatus("● WebRTC başlatılamadı: " + err.Error())
 				return
@@ -470,6 +476,7 @@ func startOperator(code string) {
 
 			setStatus("● Onaylandı. Güvenli WebRTC bağlantısı kuruluyor...")
 			go watchPeer(peer)
+			go directFallback(ctx, c, peer)
 
 		case "signal":
 			state.mu.Lock()
@@ -492,17 +499,21 @@ func startOperator(code string) {
 	}
 }
 
-func newPeer(ctx context.Context, c *clientsignaling.Client, approved bool) (*webrtcpeer.Peer, error) {
-	_ = approved
-	return newPeerTo(ctx, c, "")
+// newPeer creates the technician-side peer. withTURN=false tries a direct
+// path only (host + STUN candidates); see directFallback.
+func newPeer(ctx context.Context, c *clientsignaling.Client, withTURN bool) (*webrtcpeer.Peer, error) {
+	return newPeerTo(ctx, c, "", withTURN)
 }
 
 // newPeerTo creates a peer whose outbound signals are addressed to one
 // operator (peerID "" for the operator side / legacy sessions).
-func newPeerTo(ctx context.Context, c *clientsignaling.Client, peerID string) (*webrtcpeer.Peer, error) {
+func newPeerTo(ctx context.Context, c *clientsignaling.Client, peerID string, withTURN bool) (*webrtcpeer.Peer, error) {
 	_ = ctx
 	approved := true
 	ice := iceServers()
+	if !withTURN {
+		ice = ice[:1] // STUN only
+	}
 	var urls []string
 	for _, s := range ice {
 		urls = append(urls, s.URLs...)

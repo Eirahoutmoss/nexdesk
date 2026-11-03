@@ -604,3 +604,63 @@ func candidateMix(d *webrtc.SessionDescription) string {
 	}
 	return s
 }
+
+// LikelySameNetwork guesses, from the exchanged descriptions, whether both
+// ends sit behind the same NAT / on the same site network: a shared
+// server-reflexive (public) address, or, without any, private host
+// addresses in the same /16. Used to decide how long to try a direct
+// path before falling back to the TURN relay.
+func (p *Peer) LikelySameNetwork() bool {
+	l, r := p.pc.LocalDescription(), p.pc.RemoteDescription()
+	if l == nil || r == nil {
+		return false
+	}
+	ls, lh := candidateIPs(l.SDP)
+	rs, rh := candidateIPs(r.SDP)
+	for ip := range ls {
+		if rs[ip] {
+			return true
+		}
+	}
+	if len(ls) > 0 && len(rs) > 0 {
+		return false
+	}
+	for a := range lh {
+		for b := range rh {
+			if prefix16(a) != "" && prefix16(a) == prefix16(b) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// candidateIPs returns the srflx and host IPv4 addresses in an SDP.
+func candidateIPs(sdp string) (srflx, host map[string]bool) {
+	srflx, host = map[string]bool{}, map[string]bool{}
+	for _, line := range strings.Split(sdp, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "a=candidate:") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) < 8 || strings.Contains(f[4], ":") { // skip IPv6 / malformed
+			continue
+		}
+		switch f[7] {
+		case "srflx":
+			srflx[f[4]] = true
+		case "host":
+			host[f[4]] = true
+		}
+	}
+	return
+}
+
+func prefix16(ip string) string {
+	parts := strings.Split(ip, ".")
+	if len(parts) != 4 {
+		return ""
+	}
+	return parts[0] + "." + parts[1]
+}

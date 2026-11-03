@@ -241,10 +241,11 @@ func (s *Session) run(code, deviceID, pass string) {
 				s.turn = msg.ICE
 				s.mu.Unlock()
 			}
-			if err := s.negotiate(ctx, c); err != nil {
+			if err := s.negotiate(ctx, c, false); err != nil {
 				s.l.OnClosed("WebRTC başlatılamadı: " + err.Error())
 				return
 			}
+			go s.directFallback(ctx, c, s.currentPeer())
 			s.l.OnStatus("Güvenli bağlantı kuruluyor…")
 		case "signal":
 			if p := s.currentPeer(); p != nil {
@@ -292,11 +293,15 @@ func (s *Session) iceServers() []webrtc.ICEServer {
 
 // negotiate builds a fresh peer and sends the offer (first connect and
 // auto-reconnect both use it).
-func (s *Session) negotiate(ctx context.Context, c *clientsignaling.Client) error {
+func (s *Session) negotiate(ctx context.Context, c *clientsignaling.Client, withTURN bool) error {
 	var se webrtc.SettingEngine
 	se.SetSCTPMaxReceiveBufferSize(8 << 20)
 	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled) // mDNS is unreliable on phones
-	peer, err := webrtcpeer.NewWithSettings(true, webrtc.Configuration{ICEServers: s.iceServers()}, se, func(sctx context.Context, sig webrtcpeer.Signal) error {
+	servers := s.iceServers()
+	if !withTURN {
+		servers = servers[:1] // STUN only: direct attempt (see directFallback)
+	}
+	peer, err := webrtcpeer.NewWithSettings(true, webrtc.Configuration{ICEServers: servers}, se, func(sctx context.Context, sig webrtcpeer.Signal) error {
 		return c.Signal(sctx, sig.Kind, sig.Payload)
 	})
 	if err != nil {
@@ -419,7 +424,7 @@ func (s *Session) reconnect(ctx context.Context) {
 		}
 		s.l.OnStatus(fmt.Sprintf("Yeniden bağlanılıyor… (%d/6)", attempt))
 		time.Sleep(time.Duration(attempt) * time.Second)
-		if err := s.negotiate(ctx, c); err != nil {
+		if err := s.negotiate(ctx, c, true); err != nil {
 			continue
 		}
 		deadline := time.Now().Add(10 * time.Second)
@@ -752,4 +757,42 @@ func errorText(err error) string {
 		return "Uygulama bu sunucu için eski; güncelleyin."
 	}
 	return "Bağlanılamadı: " + e
+}
+
+// directFallback: the first attempt is direct only (no TURN relay, which
+// made ICE slow even on one network). If ICE is not connected soon after the
+// answer, renegotiate with the relay.
+func (s *Session) directFallback(ctx context.Context, c *clientsignaling.Client, peer *webrtcpeer.Peer) {
+	if peer == nil {
+		return
+	}
+	connected := func() bool {
+		st := peer.ICEState()
+		return st == webrtc.ICEConnectionStateConnected || st == webrtc.ICEConnectionStateCompleted
+	}
+	answerBy := time.Now().Add(15 * time.Second)
+	for !peer.HasRemote() {
+		if time.Now().After(answerBy) || ctx.Err() != nil || s.currentPeer() != peer || s.isStopped() {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	wait := 2500 * time.Millisecond
+	if peer.LikelySameNetwork() {
+		wait = 6 * time.Second
+	}
+	until := time.Now().Add(wait)
+	for time.Now().Before(until) {
+		if ctx.Err() != nil || s.currentPeer() != peer || s.isStopped() || connected() {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if ctx.Err() != nil || s.currentPeer() != peer || s.isStopped() || connected() {
+		return
+	}
+	s.l.OnStatus("Doğrudan bağlantı kurulamadı — sunucu üzerinden bağlanılıyor…")
+	if err := s.negotiate(ctx, c, true); err != nil {
+		s.l.OnStatus("Bağlantı kurulamadı: " + err.Error())
+	}
 }

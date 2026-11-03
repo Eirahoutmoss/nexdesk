@@ -178,8 +178,8 @@ func ctlPeers() []*webrtcpeer.Peer {
 
 // techBuildPeer (re)creates the WebRTC peer for one technician. A second
 // offer from the same technician (auto-reconnect) replaces the old peer.
-func techBuildPeer(ctx context.Context, c *clientsignaling.Client, t *techConn) (*webrtcpeer.Peer, error) {
-	peer, err := newPeerTo(ctx, c, t.id)
+func techBuildPeer(ctx context.Context, c *clientsignaling.Client, t *techConn, withTURN bool) (*webrtcpeer.Peer, error) {
+	peer, err := newPeerTo(ctx, c, t.id, withTURN)
 	if err != nil {
 		return nil, err
 	}

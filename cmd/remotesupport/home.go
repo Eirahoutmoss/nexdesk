@@ -85,6 +85,9 @@ func setHomeCode(code string) {
 	}
 	homeCodeMu.Unlock()
 	setCode(formatCode(code))
+	if state.hwnd != 0 {
+		postMessage.Call(state.hwnd, WM_APP_RELAYOUT, 0, 0) // show/hide Kopyala, Link
+	}
 }
 
 func getHomeCode() (code, errText string, starting bool) {
@@ -116,8 +119,13 @@ func wantHomeCode() bool {
 
 // startHomeCodeManager keeps the home code alive: creates it, renews it when
 // it expires unused, and recreates it after a session ends.
-func startHomeCodeManager() {
+func init() {
+	// Decided before the first layout: the first window keeps a code ready,
+	// a "Yeni Oturum" window (technician window) only when asked.
 	homeCodeWanted.Store(os.Getenv("REMOTESUPPORT_NO_DEVICE") == "")
+}
+
+func startHomeCodeManager() {
 	go func() {
 		defer logCrash("homeCode")
 		t := time.NewTicker(time.Second)
@@ -165,7 +173,11 @@ func homeCodeTick() {
 		// Firewall question and the local signaling port: once per run, not
 		// on every renewal.
 		homeSetupOnce.Do(func() {
-			ensureFirewall()
+			// The firewall question must not hold up the code: ask in parallel.
+			go func() {
+				defer logCrash("firewall")
+				ensureFirewall()
+			}()
 			if !embeddedSignalingReady.Load() {
 				startEmbeddedSignaling()
 			}
@@ -281,7 +293,7 @@ func paintHome(hdc uintptr, w, h int) {
 	code, errText, starting := getHomeCode()
 	switch {
 	case code != "" && codeSessionActive.Load():
-		paintCard(hdc, g.lx+16, g.y+40, g.cw-32-qrSize-16, 64, uiEditColor, uiBorderColor, 12)
+		paintCard(hdc, g.lx+16, g.y+40, g.cw-32-qrSize-16, 64, uiEditColor, mixHex(uiBorderColor, uiTextColor, 0.35), 12)
 		drawQR(hdc, buildJoinLink(code), g.lx+g.cw-22-qrSize, g.y+40, qrSize)
 		var note string
 		var col uint32 = uiMutedColor
@@ -319,6 +331,11 @@ func paintHome(hdc uintptr, w, h int) {
 	paintText(hdc, "kod, cihaz kimliği ya da link", g.rx+22, g.y+16, g.cw-44, 18, uiSmallFont, uiFaintColor, txVRight)
 	btnW := 150
 	editW := g.cw - 44 - btnW - 12
+	// Frames around the input boxes: on the light theme an edit box is as
+	// white as the card and could not be seen at all.
+	frame := mixHex(uiBorderColor, uiTextColor, 0.35)
+	paintCard(hdc, g.rx+18, g.y+40, editW+8, 52, uiEditColor, frame, 10)
+	paintCard(hdc, g.rx+18, g.y+138, editW+8, 36, uiEditColor, frame, 8)
 	paintText(hdc, "← cihaz parolası", g.rx+22+editW+12, g.y+142, btnW, 28, uiSmallFont, uiFaintColor, txVLeft)
 
 	paintTiles(hdc, w, h, g)

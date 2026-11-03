@@ -99,3 +99,17 @@ func TestPionLoopbackPingPong(t *testing.T) {
 		t.Fatal("PING/PONG did not complete")
 	}
 }
+
+func TestCandidateIPs(t *testing.T) {
+	sdp := "a=candidate:1 1 udp 2130706431 10.2.2.9 5000 typ host\r\n" +
+		"a=candidate:2 1 udp 1694498815 195.175.55.10 6000 typ srflx raddr 10.2.2.9 rport 5000\r\n" +
+		"a=candidate:3 1 udp 16777215 140.238.143.54 49160 typ relay raddr 0.0.0.0 rport 0\r\n" +
+		"a=candidate:4 1 udp 2130706431 fe80::1 5001 typ host\r\n"
+	s, h := candidateIPs(sdp)
+	if !s["195.175.55.10"] || len(s) != 1 || !h["10.2.2.9"] || len(h) != 1 {
+		t.Fatalf("srflx=%v host=%v", s, h)
+	}
+	if prefix16("10.2.33.119") != "10.2" {
+		t.Fatal("prefix16")
+	}
+}

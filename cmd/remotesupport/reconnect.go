@@ -43,7 +43,7 @@ func onPeerDropped(role int) {
 // operatorNegotiate builds a fresh peer and offer over the still-open signaling
 // channel. Used both for the initial connect's retry and for auto-reconnect.
 func operatorNegotiate(ctx context.Context, c *clientsignaling.Client) error {
-	peer, err := newPeer(ctx, c, true)
+	peer, err := newPeer(ctx, c, true) // with TURN: the reliable path
 	if err != nil {
 		return err
 	}
@@ -119,4 +119,48 @@ func operatorReconnectLoop() {
 	}
 	netlogf("Otomatik yeniden bağlanma BAŞARISIZ")
 	setStatus("● Otomatik yeniden bağlanma başarısız. 'Bağlantıyı Kes' ile kapatıp yeniden deneyin.")
+}
+
+// directFallback watches a direct-only first attempt. When both ends look
+// like the same site network it waits a bit longer; otherwise a direct
+// path either comes up within a couple of seconds or not at all. If ICE
+// has not connected by then, it renegotiates with the TURN relay.
+func directFallback(ctx context.Context, c *clientsignaling.Client, peer *webrtcpeer.Peer) {
+	defer logCrash("directFallback")
+	current := func() bool {
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		return state.peer == peer
+	}
+	connected := func() bool {
+		s := peer.ICEState()
+		return s == webrtc.ICEConnectionStateConnected || s == webrtc.ICEConnectionStateCompleted
+	}
+	answerBy := time.Now().Add(15 * time.Second)
+	for !peer.HasRemote() {
+		if time.Now().After(answerBy) || ctx.Err() != nil || !current() || userStopped.Load() {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	wait := 2500 * time.Millisecond
+	if peer.LikelySameNetwork() {
+		wait = 6 * time.Second
+	}
+	until := time.Now().Add(wait)
+	for time.Now().Before(until) {
+		if ctx.Err() != nil || !current() || userStopped.Load() || connected() {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if ctx.Err() != nil || !current() || userStopped.Load() || connected() {
+		return
+	}
+	netlogf("Doğrudan bağlantı %s içinde kurulamadı, TURN sunucusu üzerinden deneniyor", wait)
+	setStatus("● Doğrudan bağlantı kurulamadı — sunucu üzerinden bağlanılıyor…")
+	if err := operatorNegotiate(ctx, c); err != nil {
+		netlogf("TURN ile yeniden deneme başarısız: %v", err)
+		setStatus("● Bağlantı kurulamadı: " + err.Error())
+	}
 }
