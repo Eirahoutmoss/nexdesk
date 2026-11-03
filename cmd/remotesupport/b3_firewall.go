@@ -50,7 +50,12 @@ func ensureFirewall() {
 		text += "\r\nEski sürümün daha geniş izinleri kaldırılacak.\r\n"
 	}
 	text += "\r\nEvet derseniz Windows yönetici onayı (UAC) isteyecek."
-	if !askYesNo(brandName()+" — Güvenlik Duvarı", text) {
+	// Asked from a background goroutine: no owner window (an owned box
+	// disables NexDesk and, if it opened behind other windows, the program
+	// looked frozen), always on top and in front.
+	r, _, _ := messageBox.Call(0, uintptr(unsafe.Pointer(utf16ptr(text))), uintptr(unsafe.Pointer(utf16ptr(brandName()+" — Güvenlik Duvarı"))),
+		0x00000004|0x00000020|0x00010000|0x00040000) // MB_YESNO|MB_ICONQUESTION|MB_SETFOREGROUND|MB_TOPMOST
+	if r != 6 {
 		return
 	}
 	exe, err := os.Executable()
@@ -69,7 +74,7 @@ func ensureFirewall() {
 		rules = append(rules, `netsh advfirewall firewall add rule name="`+fwInternetRule+`" dir=in action=allow protocol=TCP localport=8091 enable=yes profile=any`)
 	}
 	args := `/c ` + strings.Join(rules, " & ")
-	r, _, _ := shellExecuteW.Call(state.hwnd, uintptr(unsafe.Pointer(utf16ptr("runas"))), uintptr(unsafe.Pointer(utf16ptr("cmd.exe"))),
+	r, _, _ = shellExecuteW.Call(state.hwnd, uintptr(unsafe.Pointer(utf16ptr("runas"))), uintptr(unsafe.Pointer(utf16ptr("cmd.exe"))),
 		uintptr(unsafe.Pointer(utf16ptr(args))), 0, 0) // SW_HIDE
 	if r <= 32 {
 		setStatus("● Güvenlik duvarı izni eklenmedi (yönetici onayı verilmedi).")

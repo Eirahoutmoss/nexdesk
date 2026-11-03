@@ -157,7 +157,11 @@ func onCommand(id int) {
 		invalidateRect.Call(state.hwnd, 0, 0)
 		setStatus("● Oturum açık tutuluyor.")
 	case ID_ACTIONS:
-		showActionsMenu()
+		if state.mode == 1 {
+			showAgentMenu()
+		} else {
+			showActionsMenu()
+		}
 	case ID_FILE_CANCEL:
 		fileCancel.Store(true)
 		setStatus("● Dosya aktarımı iptal ediliyor…")

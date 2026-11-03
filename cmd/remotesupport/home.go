@@ -802,6 +802,7 @@ func showMainMenu() {
 	add(menu, ID_ABOUT, "Hakkında", page == 3)
 	appendMenuW.Call(menu, 0x0800, 0, 0)
 	add(menu, ID_MENU_NEWWIN, "Yeni Oturum Penceresi", false)
+	add(menu, ID_NETLOG_OPEN, "Bağlantı Günlüğünü Aç", false)
 	if sub, _, _ := createPopupMenu.Call(); sub != 0 {
 		add(sub, ID_MANUAL_OP, "Davet Kodu Oluştur (destek veren)", false)
 		add(sub, ID_MANUAL_AGENT, "Davet Kodunu Yapıştır (destek alan)", false)
@@ -899,5 +900,33 @@ func hideHomeControls() {
 	for _, h := range []uintptr{state.codeLabel, state.copy, state.shareLink, state.remoteEdit, state.remotePass,
 		state.techDev, state.techDevManage, state.action, state.homeGet, state.homeGive, state.elevate} {
 		hide(h)
+	}
+}
+
+// showAgentMenu: "İşlemler" on the computer being supported.
+func showAgentMenu() {
+	menu, _, _ := createPopupMenu.Call()
+	if menu == 0 {
+		return
+	}
+	defer destroyMenu.Call(menu)
+	add := func(id int, label string) {
+		appendMenuW.Call(menu, 0, uintptr(id), uintptr(unsafe.Pointer(utf16ptr(label))))
+	}
+	add(ID_FILE_SEND, "Dosya Gönder")
+	add(ID_FILE_CANCEL, "Dosya Aktarımını İptal Et")
+	add(ID_CLIP_SEND, "Panoyu Gönder")
+	appendMenuW.Call(menu, 0x0800, 0, 0)
+	sasLabel := "Güvenlik Kodunu Doğrula (SAS)"
+	if sasVerified.Load() {
+		sasLabel = "Güvenlik Kodu Doğrulandı ✓"
+	}
+	add(ID_SAS_VERIFY, sasLabel)
+	add(ID_NETLOG_OPEN, "Bağlantı Günlüğünü Aç")
+	var pt point
+	getCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+	cmd, _, _ := trackPopupMenu.Call(menu, 0x0100, uintptr(pt.X), uintptr(pt.Y), 0, state.hwnd, 0)
+	if cmd != 0 {
+		onCommand(int(cmd))
 	}
 }
