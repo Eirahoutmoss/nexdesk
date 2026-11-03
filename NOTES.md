@@ -5,3 +5,4 @@
 - **Ekran gelmiyorsa nedeni görünüyor.** Destek alan bilgisayar ekranı yakalayamazsa teknisyene nedeni gösteriliyor (kilit/UAC ekranı, NexDesk'in ekrandaki oturumda çalışmaması ya da Windows'un görüntü vermemesi). Hata, Windows oturum ve masaüstü bilgisiyle *Bağlantı Günlüğü*'ne yazılıyor; ilk gönderilen ekran karesi de günlükte.
 - **Ekran yakalama düzeltildi.** Bazı ekran sürücülerinde (ör. Uzak Masaüstü oturumu) Windows görüntüyü hata vermeden boş döndürüyordu ve ekran hiç gönderilmiyordu. Görüntü artık bu sürücülerde de çalışan yöntemle okunuyor.
 - **Daha net görüntü.** Pencereye sığdırılan uzak ekran artık yumuşatılarak küçültülüyor; küçük yazılar okunaklı.
+- **Daha hızlı ekran aktarımı.** Ekran, teknisyenin penceresinin boyutunda gönderiliyor (daha az veri, daha az işlemci, daha net yazı). Ekran değişirken 20 kare/sn; durgun ekranda yakalama yarı hıza iniyor ve hiç veri gitmiyor.

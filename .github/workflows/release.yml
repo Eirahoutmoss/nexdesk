@@ -17,5 +17,5 @@ jobs:
           gh release delete v1.5.4-test --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
           gh release create v1.5.4-test NexDesk.exe NexDesk.exe.sha256 \
             --repo "$GITHUB_REPOSITORY" --prerelease \
-            --target e73795980f78498af4b9f9a6b989f2bed77c88f9 \
+            --target ce4863003c78ce5c8dfd23a7de882316cfbd3c72 \
             --title "NexDesk 1.5.4 (deneme)" --notes-file NOTES.md
