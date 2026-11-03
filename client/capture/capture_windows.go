@@ -64,11 +64,11 @@ var (
 	procGetSystemMetrics       = user32.NewProc("GetSystemMetrics")
 	procCreateCompatibleDC     = gdi32.NewProc("CreateCompatibleDC")
 	procDeleteDC               = gdi32.NewProc("DeleteDC")
-	procCreateCompatibleBitmap = gdi32.NewProc("CreateCompatibleBitmap")
 	procDeleteObject           = gdi32.NewProc("DeleteObject")
 	procSelectObject           = gdi32.NewProc("SelectObject")
 	procBitBlt                 = gdi32.NewProc("BitBlt")
-	procGetDIBits              = gdi32.NewProc("GetDIBits")
+	procCreateDIBSection       = gdi32.NewProc("CreateDIBSection")
+	procGdiFlush               = gdi32.NewProc("GdiFlush")
 	procGetCursorInfo          = user32.NewProc("GetCursorInfo")
 	procGetIconInfo            = user32.NewProc("GetIconInfo")
 	procDrawIconEx             = user32.NewProc("DrawIconEx")
@@ -225,9 +225,17 @@ func captureMonitorImage(index int, maxHeight int) (*image.RGBA, error) {
 	}
 	defer procDeleteDC.Call(memdc)
 
-	bmp, _, err := procCreateCompatibleBitmap.Call(screen, uintptr(m.Width), uintptr(m.Height))
-	if bmp == 0 {
-		return nil, fmt.Errorf("capture: CreateCompatibleBitmap: %w", err)
+	// Blit straight into a top-down 32-bit DIB section and read its memory.
+	// The old CreateCompatibleBitmap + GetDIBits path called GetDIBits while
+	// the bitmap was still selected into the DC, which the API forbids; most
+	// drivers tolerate it, but some (e.g. the Remote Desktop display driver)
+	// return 0 rows with no error, and the screen never left the machine.
+	hdr := bitmapInfoHeader{BiSize: uint32(unsafe.Sizeof(bitmapInfoHeader{})), BiWidth: int32(m.Width), BiHeight: -int32(m.Height), BiPlanes: 1, BiBitCount: 32, BiCompression: biRGB}
+	bmi := bitmapInfo{BmiHeader: hdr}
+	var bits unsafe.Pointer
+	bmp, _, err := procCreateDIBSection.Call(screen, uintptr(unsafe.Pointer(&bmi)), dibRGBColors, uintptr(unsafe.Pointer(&bits)), 0, 0)
+	if bmp == 0 || bits == nil {
+		return nil, fmt.Errorf("capture: CreateDIBSection: %w", err)
 	}
 	defer procDeleteObject.Call(bmp)
 
@@ -235,24 +243,18 @@ func captureMonitorImage(index int, maxHeight int) (*image.RGBA, error) {
 	if old == 0 {
 		return nil, errors.New("capture: SelectObject failed")
 	}
-	defer procSelectObject.Call(memdc, old)
-
 	ok, _, err := procBitBlt.Call(memdc, 0, 0, uintptr(m.Width), uintptr(m.Height), screen, uintptr(int32(m.X)), uintptr(int32(m.Y)), srccopy)
 	if ok == 0 {
+		procSelectObject.Call(memdc, old)
 		return nil, fmt.Errorf("capture: BitBlt: %w", err)
 	}
 	if DrawCursor.Load() {
 		drawCursor(memdc, m.X, m.Y)
 	}
+	procGdiFlush.Call()
+	procSelectObject.Call(memdc, old)
 	gray := Grayscale.Load()
-
-	hdr := bitmapInfoHeader{BiSize: uint32(unsafe.Sizeof(bitmapInfoHeader{})), BiWidth: int32(m.Width), BiHeight: -int32(m.Height), BiPlanes: 1, BiBitCount: 32, BiCompression: biRGB}
-	bmi := bitmapInfo{BmiHeader: hdr}
-	raw := make([]byte, m.Width*m.Height*4)
-	rows, _, err := procGetDIBits.Call(memdc, bmp, 0, uintptr(m.Height), uintptr(unsafe.Pointer(&raw[0])), uintptr(unsafe.Pointer(&bmi)), dibRGBColors)
-	if rows == 0 {
-		return nil, fmt.Errorf("capture: GetDIBits: %w", err)
-	}
+	raw := unsafe.Slice((*byte)(bits), m.Width*m.Height*4)
 
 	img := image.NewRGBA(image.Rect(0, 0, m.Width, m.Height))
 	for y := 0; y < m.Height; y++ {

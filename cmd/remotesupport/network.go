@@ -334,7 +334,7 @@ func (f *captureFailure) ok(peer *webrtcpeer.Peer) {
 
 func captureFailText(d capture.Diagnosis, err error) string {
 	if d.OutsideConsole() {
-		return "NexDesk bilgisayarın ekrandaki oturumunda çalışmıyor (Uzak Masaüstü ile bağlanılmış, kullanıcı değiştirilmiş ya da program hizmet olarak başlatılmış olabilir). Ekrandaki oturumda açın."
+		return "NexDesk, bilgisayarın ekranındaki oturumda değil, ayrı bir Windows oturumunda çalışıyor (Uzak Masaüstü, kullanıcı değiştirme ya da hizmet). Uzak Masaüstü penceresi küçültülmüş ya da bağlantısı kesilmişse o oturum görüntü üretmez; NexDesk'i ekrandaki oturumda açın (" + err.Error() + ")."
 	}
 	return "Windows ekran görüntüsü vermiyor (" + err.Error() + "). Bir güvenlik / veri sızıntısı önleme yazılımı engelliyor olabilir."
 }
